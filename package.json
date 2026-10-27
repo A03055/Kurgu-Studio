@@ -1,0 +1,57 @@
+{
+  "name": "kurgu-studio",
+  "productName": "Kurgu Studio",
+  "version": "1.0.0",
+  "description": "Ücretsiz, reklamsız, filigransız video düzenleyici",
+  "main": "electron/main.js",
+  "author": "Kurgu Studio",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64",
+    "dist:dir": "electron-builder --win --x64 --dir"
+  },
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.kurgustudio.app",
+    "productName": "Kurgu Studio",
+    "copyright": "Kurgu Studio — özgür yazılım",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "index.html",
+      "css/**/*",
+      "js/**/*",
+      "electron/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Kurgu Studio",
+      "artifactName": "KurguStudio-Kurulum-${version}.${ext}",
+      "installerLanguages": ["tr_TR"],
+      "language": "1055"
+    },
+    "portable": {
+      "artifactName": "KurguStudio-Tasinabilir-${version}.${ext}"
+    }
+  }
+}

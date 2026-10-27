@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kurgu Studio — Ücretsiz Video Düzenleyici</title>
+<meta name="description" content="Ücretsiz, reklamsız, filigransız video düzenleyici. Dosyaların bilgisayarından hiç çıkmaz.">
+<link rel="icon" href="build/icon.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"><svg viewBox="0 0 32 32" width="26" height="26"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M12 9.5v13l10.5-6.5z" fill="#fff"/></svg></span>
+    <span class="brand-name">Kurgu<b>Studio</b></span>
+  </div>
+  <input id="projName" class="proj-name" spellcheck="false" title="Proje adı">
+  <div class="top-actions">
+    <span class="badge-free">Ücretsiz · Filigransız</span>
+    <button id="btnNew" class="btn ghost"></button>
+    <button id="btnExport" class="btn primary"></button>
+  </div>
+</header>
+
+<main class="workspace">
+  <aside class="panel left">
+    <nav class="rail" id="rail"></nav>
+    <div class="panel-body" id="panelBody"></div>
+  </aside>
+
+  <section class="viewer">
+    <div class="stage" id="stage">
+      <canvas id="preview"></canvas>
+      <div class="empty-hint" id="emptyHint">
+        <div class="eh-ic"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5M4 21h16"/></svg></div>
+        <b>Videolarını buraya sürükle</b>
+        <span>ya da</span>
+        <button class="btn primary" id="emptyImport">Dosya seç</button>
+        <small>Dosyaların bilgisayarından dışarı çıkmaz.</small>
+      </div>
+    </div>
+    <div class="transport">
+      <div class="tc"><span id="tcCur">00:00.00</span><span class="sep">/</span><span id="tcDur" class="dim">00:00.00</span></div>
+      <div class="tp-center">
+        <button id="btnStart" class="ib" title="Başa git (Home)"></button>
+        <button id="btnPlay" class="play-btn" title="Oynat / Durdur (Boşluk)"></button>
+        <button id="btnEnd" class="ib" title="Sona git (End)"></button>
+      </div>
+      <div class="tp-right">
+        <select id="aspectQuick" title="En-boy oranı">
+          <option value="16:9">16:9 YouTube</option>
+          <option value="9:16">9:16 TikTok / Reels</option>
+          <option value="1:1">1:1 Kare</option>
+          <option value="4:5">4:5 Instagram</option>
+          <option value="4:3">4:3 Klasik</option>
+          <option value="21:9">21:9 Sinema</option>
+        </select>
+        <button id="btnFull" class="ib" title="Tam ekran"></button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel right" id="inspector"></aside>
+</main>
+
+<div class="splitter" id="splitter" title="Sürükleyerek boyutlandır"></div>
+
+<section class="timeline" id="timeline">
+  <div class="tl-toolbar">
+    <div class="tb-group">
+      <button id="btnUndo" class="ib" title="Geri al (Ctrl+Z)"></button>
+      <button id="btnRedo" class="ib" title="Yinele (Ctrl+Y)"></button>
+      <span class="tb-sep"></span>
+      <button id="btnSplit" class="ib" title="Böl (S)"></button>
+      <button id="btnDelete" class="ib" title="Sil (Delete)"></button>
+      <button id="btnDup" class="ib" title="Çoğalt (Ctrl+D)"></button>
+      <button id="btnFreeze" class="ib" title="Kareyi dondur"></button>
+    </div>
+    <div class="tb-group">
+      <button id="btnSnap" class="ib" title="Yapışma (snap)"></button>
+      <span class="tb-sep"></span>
+      <button id="btnZoomOut" class="ib" title="Uzaklaş (-)"></button>
+      <input type="range" id="zoomSlider" min="1.4" max="6" step="0.01" title="Yakınlaştırma">
+      <button id="btnZoomIn" class="ib" title="Yakınlaş (+)"></button>
+      <button id="btnFit" class="btn ghost xs" title="Tümünü sığdır">Sığdır</button>
+    </div>
+  </div>
+  <div class="tl-scroll" id="tlScroll"><div class="tl-inner" id="tlInner"></div></div>
+</section>
+
+<div class="modal hidden" id="exportModal">
+  <div class="modal-card">
+    <button class="modal-x ib" id="exClose" title="Kapat">✕</button>
+    <h2>Dışa aktar</h2>
+    <div id="exOptions">
+      <label class="f-row"><span>Dosya adı</span><input id="exName"></label>
+      <label class="f-row"><span>Çözünürlük</span>
+        <select id="exRes"><option value="480">480p (küçük dosya)</option><option value="720">720p HD</option><option value="1080" selected>1080p Full HD</option><option value="1440">1440p 2K</option><option value="2160">2160p 4K (güçlü bilgisayar)</option></select>
+      </label>
+      <label class="f-row"><span>Kare hızı</span>
+        <select id="exFps"><option value="24">24 fps (sinema)</option><option value="30" selected>30 fps</option><option value="60">60 fps (akıcı)</option></select>
+      </label>
+      <div class="f-row"><span>Biçim</span><b id="exFormat">MP4</b></div>
+      <div class="f-row"><span>Süre</span><b id="exDuration">00:00</b></div>
+      <label class="ctl toggle"><input type="checkbox" id="exMonitor"><span class="sw"></span><span>Aktarırken sesi hoparlörden çal</span></label>
+      <p class="hint">Video gerçek zamanlı kaydedilir. Aktarım sırasında bu pencereyi açık tut. Filigran yok, sınır yok.</p>
+      <div class="modal-actions"><button class="btn primary big" id="exStart">Dışa aktarmayı başlat</button></div>
+    </div>
+    <div id="exProgress" class="hidden">
+      <div class="ex-anim"><span></span><span></span><span></span></div>
+      <p>Video oluşturuluyor… <b id="exPct">0%</b></p>
+      <div class="progress"><div id="exBar"></div></div>
+      <p class="dim" id="exTime"></p>
+      <div class="modal-actions"><button class="btn ghost" id="exCancel">İptal</button></div>
+    </div>
+    <div id="exDone" class="hidden">
+      <video id="exPreview" controls></video>
+      <p class="ok-msg">✓ Videon hazır! <span id="exFile" class="dim"></span></p>
+      <div class="modal-actions">
+        <a class="btn primary big" id="exLink">İndir</a>
+        <button class="btn ghost" id="exAgain">Tekrar aktar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="drop-overlay hidden" id="dropOverlay"><div>Dosyaları bırak, içe aktarılsın</div></div>
+<div id="mediaPool" aria-hidden="true"></div>
+<div id="toasts"></div>
+
+<script src="js/util.js"></script>
+<script src="js/state.js"></script>
+<script src="js/library.js"></script>
+<script src="js/media.js"></script>
+<script src="js/render.js"></script>
+<script src="js/timeline.js"></script>
+<script src="js/inspector.js"></script>
+<script src="js/panels.js"></script>
+<script src="js/export.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
