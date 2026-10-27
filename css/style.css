@@ -583,3 +583,14 @@ body.panning, body.panning * { cursor: grabbing !important; }
 .speed-info b { color: var(--text); }
 .speed-info .arrow { color: var(--accent2); }
 .speed-info .spd { margin-left: auto; font: 700 12px ui-monospace, Consolas, monospace; color: var(--accent2); }
+
+/* dışa aktarma tahmini */
+.ex-estimate { margin: 12px 0 4px; padding: 12px 14px; border-radius: 12px; background: linear-gradient(135deg, rgba(139, 92, 246, .14), rgba(34, 211, 238, .08)); border: 1px solid rgba(139, 92, 246, .35); }
+.est-main { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; color: var(--dim); }
+.est-main b { font-size: 22px; color: #fff; }
+.est-grid { display: grid; grid-template-columns: 1fr auto; gap: 3px 12px; font-size: 12px; color: var(--dim); }
+.est-grid b { color: var(--text); font-weight: 600; text-align: right; }
+.est-tag { margin-top: 8px; font-size: 11.5px; color: var(--ok); }
+.est-warn { margin-top: 8px; font-size: 11.5px; color: #ffcf5a; }
+.est-note { margin-top: 6px; font-size: 10.5px; color: var(--dim2); }
+.f-row input[type=number] { width: 220px; }

@@ -108,8 +108,18 @@
       <label class="f-row"><span>Kare hızı</span>
         <select id="exFps"><option value="24">24 fps (sinema)</option><option value="30" selected>30 fps</option><option value="60">60 fps (akıcı)</option></select>
       </label>
-      <div class="f-row"><span>Biçim</span><b id="exFormat">MP4</b></div>
-      <div class="f-row"><span>Süre</span><b id="exDuration">00:00</b></div>
+      <label class="f-row"><span>Kalite</span>
+        <select id="exQuality">
+          <option value="low">Düşük (en küçük dosya)</option>
+          <option value="medium">Orta (WhatsApp / paylaşım)</option>
+          <option value="high" selected>Yüksek (YouTube / Instagram)</option>
+          <option value="max">En yüksek (arşiv)</option>
+          <option value="target">Hedef dosya boyutu…</option>
+        </select>
+      </label>
+      <label class="f-row hidden" id="exTargetRow"><span>Hedef boyut (MB)</span><input id="exTarget" type="number" min="1" step="1" value="16"></label>
+      <label class="f-row"><span>Biçim</span><select id="exFormatSel"></select></label>
+      <div class="ex-estimate" id="exEstimate"></div>
       <label class="ctl toggle"><input type="checkbox" id="exMonitor"><span class="sw"></span><span>Aktarırken sesi hoparlörden çal</span></label>
       <p class="hint">Video gerçek zamanlı kaydedilir. Aktarım sırasında bu pencereyi açık tut. Filigran yok, sınır yok.</p>
       <div class="modal-actions"><button class="btn primary big" id="exStart">Dışa aktarmayı başlat</button></div>
@@ -119,6 +129,7 @@
       <p>Video oluşturuluyor… <b id="exPct">0%</b></p>
       <div class="progress"><div id="exBar"></div></div>
       <p class="dim" id="exTime"></p>
+      <p class="dim" id="exSize"></p>
       <div class="modal-actions"><button class="btn ghost" id="exCancel">İptal</button></div>
     </div>
     <div id="exDone" class="hidden">

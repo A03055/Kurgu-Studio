@@ -6,7 +6,7 @@ const Exporter = {
   cancelled: false,
   finish: null,
 
-  pickMime() {
+  formats() {
     const list = [
       ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'mp4'],
       ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'mp4'],
@@ -16,17 +16,82 @@ const Exporter = {
       ['video/webm;codecs=vp8,opus', 'webm'],
       ['video/webm', 'webm'],
     ];
-    for (const [m, ext] of list) if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return { mime: m, ext };
-    return null;
+    const out = {};
+    if (!window.MediaRecorder) return out;
+    for (const [m, ext] of list) if (!out[ext] && MediaRecorder.isTypeSupported(m)) out[ext] = { mime: m, ext };
+    return out;
+  },
+  pickMime(ext) {
+    const f = this.formats();
+    return f[ext] || f.mp4 || f.webm || null;
+  },
+
+  QUALITY: { low: [0.05, 96000], medium: [0.09, 128000], high: [0.16, 192000], max: [0.28, 256000] },
+
+  /* Seçilen ayarlara göre bit hızlarını ve tahmini boyutu hesaplar */
+  plan() {
+    const res = parseInt($('#exRes').value, 10);
+    const fps = parseInt($('#exFps').value, 10);
+    const q = $('#exQuality').value;
+    const dur = Math.max(0.1, projectDuration());
+    const [W, H] = Engine.size(res);
+    let vbps, abps;
+    if (q === 'target') {
+      const mb = Math.max(1, parseFloat($('#exTarget').value) || 16);
+      abps = 128000;
+      // %4 kapsayıcı payı bırak
+      vbps = Math.max(250000, (mb * 1048576 * 8 * 0.96) / dur - abps);
+    } else {
+      const [k, a] = this.QUALITY[q];
+      vbps = W * H * fps * k;
+      abps = a;
+    }
+    vbps = Math.round(Math.min(vbps, 80e6));
+    const bytes = (vbps + abps) * dur / 8;
+    return { res, fps, W, H, vbps, abps, bytes, dur, q };
+  },
+
+  updateEstimate() {
+    const p = this.plan();
+    $('#exTargetRow').classList.toggle('hidden', p.q !== 'target');
+    const mb = p.bytes / 1048576;
+    const sizeTxt = mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb >= 10 ? Math.round(mb) + ' MB' : mb.toFixed(1) + ' MB';
+    const lowWarn = p.q === 'target' && p.vbps / (p.W * p.H * p.fps) < 0.03;
+    const share = mb <= 16 ? 'WhatsApp\'a sığar' : mb <= 25 ? 'E-postaya sığar' : mb <= 100 ? 'Discord Nitro / Telegram' : '';
+    $('#exEstimate').innerHTML = `
+      <div class="est-main"><span>Tahmini dosya boyutu</span><b>≈ ${sizeTxt}</b></div>
+      <div class="est-grid">
+        <span>Çözünürlük</span><b>${p.W} × ${p.H}</b>
+        <span>Video bit hızı</span><b>${(p.vbps / 1e6).toFixed(1)} Mbps</b>
+        <span>Ses</span><b>${Math.round(p.abps / 1000)} kbps</b>
+        <span>Video süresi</span><b>${fmtTime(p.dur)}</b>
+        <span>Aktarım süresi</span><b>≈ ${fmtShort(p.dur + 1)}</b>
+      </div>
+      ${share ? `<div class="est-tag">✓ ${share}</div>` : ''}
+      ${lowWarn ? '<div class="est-warn">Bu boyut için kalite düşük olabilir. Çözünürlüğü azaltmak görüntüyü daha net yapar.</div>' : ''}
+      <div class="est-note">Hareketsiz sahnelerde dosya daha küçük çıkabilir.</div>`;
   },
 
   open() {
     if (projectDuration() <= 0) return toast('Önce zaman çizelgesine bir şey ekle');
     const modal = $('#exportModal');
-    const fmt = this.pickMime();
-    $('#exFormat').textContent = fmt ? fmt.ext.toUpperCase() : 'desteklenmiyor';
+    const fm = this.formats();
+    const sel = $('#exFormatSel');
+    const prev = sel.value;
+    sel.innerHTML = '';
+    if (fm.mp4) sel.appendChild(h('option', { value: 'mp4' }, 'MP4 (her yerde açılır)'));
+    if (fm.webm) sel.appendChild(h('option', { value: 'webm' }, 'WebM'));
+    if (!sel.options.length) sel.appendChild(h('option', { value: '' }, 'desteklenmiyor'));
+    if (prev && fm[prev]) sel.value = prev;
     $('#exName').value = state.project.name || 'video';
-    $('#exDuration').textContent = fmtTime(projectDuration());
+    if (!this.bound) {
+      this.bound = true;
+      for (const id of ['#exRes', '#exFps', '#exQuality', '#exTarget', '#exFormatSel']) {
+        $(id).addEventListener('input', () => this.updateEstimate());
+        $(id).addEventListener('change', () => this.updateEstimate());
+      }
+    }
+    this.updateEstimate();
     $('#exOptions').classList.remove('hidden');
     $('#exProgress').classList.add('hidden');
     $('#exDone').classList.add('hidden');
@@ -42,11 +107,11 @@ const Exporter = {
   },
 
   async start() {
-    const fmt = this.pickMime();
+    const fmt = this.pickMime($('#exFormatSel').value);
+    const plan = this.plan();
     const canvas = Engine.canvas;
     if (!fmt || !canvas.captureStream) return toast('Bu tarayıcı video kaydını desteklemiyor. Chrome veya Edge kullan.', 'err');
-    const res = parseInt($('#exRes').value, 10);
-    const fps = parseInt($('#exFps').value, 10);
+    const { res, fps } = plan;
     const name = ($('#exName').value || 'video').replace(/[\\/:*?"<>|]+/g, '_');
     const prevRes = state.project.res;
 
@@ -70,14 +135,14 @@ const Exporter = {
     const vs = canvas.captureStream(fps);
     const tracks = [...vs.getVideoTracks()];
     if (Engine.recDest) tracks.push(...Engine.recDest.stream.getAudioTracks());
-    const pixels = Engine.W * Engine.H;
     const rec = new MediaRecorder(new MediaStream(tracks), {
       mimeType: fmt.mime,
-      videoBitsPerSecond: Math.round(pixels * fps * 0.17),
-      audioBitsPerSecond: 192000,
+      videoBitsPerSecond: plan.vbps,
+      audioBitsPerSecond: plan.abps,
     });
     const chunks = [];
-    rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    let written = 0;
+    rec.ondataavailable = e => { if (e.data && e.data.size) { chunks.push(e.data); written += e.data.size; } };
     const stopped = new Promise(r => { rec.onstop = r; });
     const monitorOn = $('#exMonitor').checked;
     if (Engine.monitor) Engine.monitor.gain.value = monitorOn ? 1 : 0;
@@ -91,6 +156,7 @@ const Exporter = {
       bar.style.width = (p * 100).toFixed(1) + '%';
       pct.textContent = Math.floor(p * 100) + '%';
       $('#exTime').textContent = `${fmtTime(state.time)} / ${fmtTime(total)}`;
+      $('#exSize').textContent = `Şu ana kadar ${(written / 1048576).toFixed(1)} MB · tahmini toplam ≈ ${(plan.bytes / 1048576).toFixed(1)} MB`;
     }, 200);
 
     rec.start(500);
