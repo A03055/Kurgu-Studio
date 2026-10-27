@@ -7,7 +7,7 @@ const Panels = {
 
   init() {
     const rail = $('#rail');
-    const tabs = [['media', 'media', 'Medya'], ['audio', 'audio', 'Ses'], ['text', 'text', 'Metin'], ['sticker', 'sticker', 'Çıkartma'],
+    const tabs = [['media', 'media', 'Medya'], ['audio', 'audio', 'Müzik'], ['text', 'text', 'Metin'], ['sticker', 'sticker', 'Çıkartma'],
       ['fx', 'fx', 'Efekt'], ['transition', 'transition', 'Geçiş'], ['filter', 'filter', 'Filtre']];
     for (const [id, ic, name] of tabs) {
       rail.appendChild(h('button', { class: 'rail-btn', 'data-tab': id, onclick: () => this.show(id) },
@@ -89,29 +89,70 @@ const Panels = {
     b.appendChild(h('button', { class: 'rec-big', onclick: () => VoiceRec.toggle() },
       h('span', { class: 'ri', html: icon('mic', 20) }),
       h('span', {}, h('b', {}, 'Seslendirme kaydet'), h('span', {}, 'Mikrofondan oynatma çizgisinin olduğu yere kaydeder. Video oynar, sen konuşursun.'))));
-    b.appendChild(h('div', { class: 'panel-title' }, 'Müzik ', h('small', {}, 'ücretsiz · telifsiz')));
+    const own = h('input', { type: 'file', multiple: true, accept: 'audio/*,video/*', hidden: true });
+    own.addEventListener('change', async () => {
+      const files = [...own.files]; own.value = '';
+      for (const f of files) {
+        const before = new Set(state.media.keys());
+        await importFiles([f]);
+        const m = [...state.media.values()].find(x => !before.has(x.id));
+        if (m) await Library.add({ type: 'media', id: m.id, asMusic: true });
+      }
+    });
+    b.appendChild(h('button', { class: 'btn ghost own-music', html: icon('upload', 16) + ' Kendi müziğini ekle (MP3, WAV, M4A…)', onclick: () => own.click() }, own));
+    b.appendChild(h('div', { class: 'panel-title' }, 'Hazır müzikler ', h('small', {}, 'ücretsiz · telifsiz')));
+    b.appendChild(h('p', { class: 'hint' }, '▶ ile dinle, + ile oynatma çizgisinin olduğu yere ekle. Müzik zaman çizelgesinin altındaki "Müzik" izine yerleşir.'));
     for (const s of MUSIC) b.appendChild(this.soundRow(s, 'music'));
     b.appendChild(h('div', { class: 'panel-title' }, 'Ses efektleri'));
     const grid = h('div', { class: 'sfx-grid' });
     for (const s of SFX) grid.appendChild(this.soundRow(s, 'sfx'));
     b.appendChild(grid);
-    const own = [...state.media.values()].filter(m => m.kind === 'audio' && !m.builtin);
-    if (own.length) {
+    const mine = [...state.media.values()].filter(m => m.kind === 'audio' && !m.builtin);
+    if (mine.length) {
       b.appendChild(h('div', { class: 'panel-title' }, 'Senin seslerin'));
       const g = h('div', { class: 'media-grid' });
-      own.forEach(m => g.appendChild(this.mediaCard(m)));
+      mine.forEach(m => g.appendChild(this.mediaCard(m)));
       b.appendChild(g);
     }
     b.appendChild(h('p', { class: 'hint' }, 'Tüm müzikler ve efektler bu programın içinde üretilir; YouTube, TikTok ve Instagram\'da gönül rahatlığıyla kullanabilirsin.'));
   },
 
-  async soundBlob(s, kind) {
+  pending: new Map(),
+
+  async soundBlob(s, kind, quiet = false) {
     const key = `${kind}-${s.id}`;
-    const existing = [...state.media.values()].find(m => m.builtin === key);
+    const existing = [...state.media.values()].find(m => m.builtin === key && !m.loading);
     if (existing) return existing;
-    toast(`"${s.name}" hazırlanıyor…`);
-    const blob = await s.make();
-    return addGeneratedMedia(blob, s.name, 'audio', key);
+    if (this.pending.has(key)) return this.pending.get(key);
+    this.setBusy(key, true);
+    if (!quiet) toast(`"${s.name}" hazırlanıyor…`);
+    const job = (async () => {
+      try {
+        const blob = await s.make();
+        return await addGeneratedMedia(blob, s.name, 'audio', key);
+      } finally {
+        this.pending.delete(key);
+        this.setBusy(key, false);
+      }
+    })();
+    this.pending.set(key, job);
+    return job;
+  },
+
+  setBusy(key, on) {
+    $$(`.snd-row[data-key="${key}"]`).forEach(r => {
+      r.classList.toggle('busy', on);
+      r.classList.toggle('ready', !on && [...state.media.values()].some(m => m.builtin === key));
+    });
+  },
+
+  /* Müzikleri boşta arka planda hazırla: sonra dinleme/ekleme anında olur */
+  async prewarm() {
+    for (const s of MUSIC) {
+      await new Promise(r => (window.requestIdleCallback || setTimeout)(r, { timeout: 2000 }));
+      if (state.playing || state.exporting) await wait(3000);
+      try { await this.soundBlob(s, 'music', true); } catch (e) { console.warn(e); }
+    }
   },
 
   soundRow(s, kind) {
@@ -133,10 +174,13 @@ const Panels = {
       play.classList.add('on'); play.innerHTML = icon('pause', 14);
       a.onended = () => { play.classList.remove('on'); play.innerHTML = icon('play', 14); };
     });
-    const row = h('div', { class: 'snd-row ' + kind },
+    const key = `${kind}-${s.id}`;
+    const ready = [...state.media.values()].some(m => m.builtin === key && !m.loading);
+    const row = h('div', { class: 'snd-row ' + kind + (ready ? ' ready' : '') + (this.pending.has(key) ? ' busy' : ''), 'data-key': key },
       play,
-      h('div', { class: 'snd-info' }, h('b', {}, s.name), s.desc ? h('span', {}, s.desc) : null),
-      h('button', { class: 'snd-add', html: icon('plus', 16), title: 'Ekle', onclick: e => { e.stopPropagation(); Library.add({ type: 'sound', id: s.id, kind }); } }));
+      h('div', { class: 'snd-info' }, h('b', {}, s.name), h('span', {}, s.desc ? s.desc : ''), h('em', { class: 'snd-state' }, 'hazırlanıyor…')),
+      h('button', { class: 'snd-add', html: icon('plus', 16), title: 'Zaman çizelgesine ekle', onclick: e => { e.stopPropagation(); Library.add({ type: 'sound', id: s.id, kind }); } }));
+    row.addEventListener('dblclick', () => Library.add({ type: 'sound', id: s.id, kind }));
     return this.draggable(row, { type: 'sound', id: s.id, kind });
   },
 
@@ -216,8 +260,14 @@ const Library = {
       if (m.loading) return toast('Dosya hâlâ hazırlanıyor…');
       clip = makeClip(m.kind, { mediaId: m.id, in: 0, out: m.kind === 'image' ? 5 : m.duration, name: m.name });
       track = opt.track && acceptsKind(opt.track, m.kind) ? opt.track : getTrackFor(m.kind);
+      if (item.asMusic && m.kind === 'audio') {
+        const at = state.project.tracks.filter(t => t.kind === 'audio');
+        track = at[at.length - 1] || addTrack('audio');
+        clip.fadeOut = 1.5;
+      }
       // "+" ile eklenen video/resim ana izin sonuna eklenir
       clip.start = opt.time === undefined && track.main ? trackEnd(track) : at;
+      if (item.asMusic) clip.start = at;
     } else if (item.type === 'sound') {
       const list = item.kind === 'music' ? MUSIC : SFX;
       const s = list.find(x => x.id === item.id);
@@ -259,6 +309,8 @@ const Library = {
     state.multi.clear();
     if (clip.kind !== 'audio' && opt.time === undefined && track.main) Engine.seek(clip.start);
     refresh();
+    TL.reveal(clip.id);
+    if (clip.kind === 'audio') toast(`"${clip.name || 'Ses'}" eklendi → ${track.name} izi`, 'ok');
     $('#emptyHint').classList.add('hidden');
   },
 };

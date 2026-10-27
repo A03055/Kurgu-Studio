@@ -301,6 +301,8 @@ const Engine = {
         if (active) {
           const target = c.in + (t - s) * c.speed;
           if (Math.abs(el.playbackRate - c.speed) > 0.001) el.playbackRate = c.speed;
+          const keep = c.keepPitch !== false;
+          if ('preservesPitch' in el && el.preservesPitch !== keep) el.preservesPitch = keep;
           if (x.gain) this.rewire(x, `${c.afx || 'none'}|${c.enhance ? 1 : 0}`);
           let level = tr.muted ? 0 : prop(c, 'volume', t) * this.fade(c, t);
           if (c.duck && voice) level *= 0.22;

@@ -115,10 +115,13 @@ const Inspector = {
     inp.addEventListener('change', () => {
       const v = Math.max(MIN_DUR, parseFloat(inp.value) || 1);
       History.checkpoint();
+      const old = clipEnd(c);
       if (isMediaKind(c.kind)) {
         const m = state.media.get(c.mediaId);
         c.out = Math.min(m ? m.duration : Infinity, c.in + v * c.speed);
       } else c.out = c.in + v;
+      const f = findClip(c.id);
+      if (f) rippleFrom(f.track, c, old);
       refresh();
     });
     return h('div', { class: 'ctl row' }, h('label', {}, 'Süre (sn)'), inp);
@@ -248,16 +251,45 @@ const Inspector = {
       ctlSlider({ label: 'Renk taşmasını azalt', min: 0, max: 0.6, step: 0.005, get: () => K.spill, set: v => { K.spill = v; }, fmt: v => Math.round(v * 100 / 0.6), def: 0.15 })));
   },
 
-  tabSpeed(b, c) {
-    const setSpeed = v => {
-      const m = state.media.get(c.mediaId);
-      c.speed = v;
-      if (m) c.out = Math.min(c.out, m.duration);
+  tabSpeed(b, c, track) {
+    const src = c.out - c.in;
+    const apply = v => {
+      const old = clipEnd(c);
+      c.speed = Math.round(clamp(v, 0.1, 10) * 100000) / 100000;
+      rippleFrom(track, c, old);
     };
-    b.appendChild(section('Hız',
-      chips([0.25, 0.5, 1, 1.5, 2, 3, 4].map(v => ({ id: v, name: v + 'x' })), () => c.speed, setSpeed, true),
-      ctlSlider({ label: 'Özel hız', min: 0.25, max: 4, step: 0.05, get: () => c.speed, set: setSpeed, fmt: v => v.toFixed(2) + 'x', def: 1, tl: true }),
-      h('p', { class: 'hint' }, `Klip süresi: ${fmtShort(clipDur(c))}`)));
+    const info = h('div', { class: 'speed-info' });
+    const durInp = h('input', { type: 'number', min: 0.1, step: 0.1 });
+    const PRESETS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5];
+    const chipBox = h('div', { class: 'chips' }, PRESETS.map(v => h('button', {
+      class: 'chip', 'data-v': v,
+      onclick: () => { History.checkpoint(); apply(v); afterEdit(true); this.render(); },
+    }, v + 'x')));
+    const update = () => {
+      info.innerHTML = `<span>Kaynak <b>${fmtShort(src)}</b></span><span class="arrow">→</span><span>Klip süresi <b>${fmtShort(clipDur(c))}</b></span><span class="spd">${+c.speed.toFixed(2)}x</span>`;
+      if (document.activeElement !== durInp) durInp.value = clipDur(c).toFixed(2);
+      chipBox.querySelectorAll('.chip').forEach(ch => ch.classList.toggle('on', Math.abs(parseFloat(ch.dataset.v) - c.speed) < 0.001));
+    };
+    durInp.addEventListener('change', () => {
+      const v = parseFloat(String(durInp.value).replace(',', '.'));
+      if (!(v > 0)) return update();
+      const need = src / v;
+      if (need < 0.1 || need > 10) toast(`Bu süre için hız ${need < 0.1 ? '0.1x altına' : '10x üstüne'} çıkmalı; en yakın değer kullanıldı`);
+      History.checkpoint();
+      apply(need);
+      afterEdit(true);
+      this.render();
+    });
+    durInp.addEventListener('keydown', e => { if (e.key === 'Enter') durInp.blur(); });
+    b.appendChild(section('Hız', chipBox,
+      ctlSlider({ label: 'Özel hız', min: Math.log(0.1), max: Math.log(10), step: 0.005, get: () => Math.log(c.speed), set: v => { apply(Math.exp(v)); update(); }, fmt: v => Math.exp(v).toFixed(2) + 'x', def: 0, tl: true }),
+      info));
+    b.appendChild(section('Süreye göre hız',
+      h('div', { class: 'ctl row' }, h('label', {}, 'Hedef süre (sn)'), durInp),
+      h('p', { class: 'hint' }, 'İstediğin süreyi yaz ve Enter\'a bas; hız klibin tamamı bu süreye sığacak şekilde otomatik ayarlanır. Arkadaki klipler de kayar.')));
+    b.appendChild(section('Ses',
+      ctlToggle('Sesin perdesini koru (yavaşlayınca kalınlaşmasın)', () => c.keepPitch !== false, v => { c.keepPitch = v; })));
+    update();
   },
 
   tabTrans(b, c, track) {

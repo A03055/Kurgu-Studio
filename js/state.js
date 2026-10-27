@@ -274,3 +274,11 @@ function selectedClips() {
   if (state.selected) ids.add(state.selected);
   return [...ids].map(findClip).filter(Boolean);
 }
+
+/* Klip uzayıp kısalınca aynı izde arkasındaki klipleri kaydırır (üst üste binmesin, boşluk kalmasın) */
+function rippleFrom(track, clip, oldEnd) {
+  if (!track) return;
+  const delta = clipEnd(clip) - oldEnd;
+  if (Math.abs(delta) < 1e-6) return;
+  for (const o of track.clips) if (o !== clip && o.start >= oldEnd - 1e-3) o.start = Math.max(0, o.start + delta);
+}

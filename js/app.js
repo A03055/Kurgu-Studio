@@ -442,6 +442,10 @@ async function main() {
   $('#btnOpen').innerHTML = icon('upload', 16) + '<span>Aç</span>';
   $('#btnSave').innerHTML = icon('download', 16) + '<span>Kaydet</span>';
   $('#btnRec').innerHTML = icon('mic');
+  $('#btnAddMusic').innerHTML = icon('audio', 14) + '<span>Müzik ekle</span>';
+  $('#btnAddText').innerHTML = icon('text', 14) + '<span>Metin ekle</span>';
+  $('#btnAddMusic').onclick = () => { Panels.show('audio'); $('#panelBody').scrollTop = 0; };
+  $('#btnAddText').onclick = () => { Panels.show('text'); Library.add({ type: 'text', preset: 0 }); };
   $('#btnOpen').onclick = () => $('#openInput').click();
   $('#openInput').addEventListener('change', e => { if (e.target.files[0]) openProjectFile(e.target.files[0]); e.target.value = ''; });
   $('#btnSave').onclick = saveProjectFile;
@@ -501,6 +505,7 @@ async function main() {
 
   refresh();
   setTimeout(() => { if (allClips().length) TL.fitZoom(); }, 50);
+  setTimeout(() => Panels.prewarm(), 2500);
 }
 
 window.addEventListener('DOMContentLoaded', main);

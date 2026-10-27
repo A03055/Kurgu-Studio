@@ -2,7 +2,7 @@
 /* Zaman çizelgesi: izler, klipler, sürükle-bırak, kırpma, yakalama (snap) */
 
 const HEAD_W = 132;
-const TRACK_H = { fx: 34, text: 38, video: 62, audio: 46 };
+const TRACK_H = { fx: 30, text: 34, video: 56, audio: 42 };
 const KIND_LABEL = { video: 'Video', image: 'Resim', audio: 'Ses', text: 'Metin', fx: 'Efekt' };
 
 const TL = {
@@ -20,8 +20,16 @@ const TL = {
         const before = e.clientX - this.scroll.getBoundingClientRect().left;
         this.setZoom(state.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
         this.scroll.scrollLeft = HEAD_W + t * state.zoom - before;
-      } else if (!e.shiftKey && Math.abs(e.deltaX) < Math.abs(e.deltaY) && this.inner.scrollHeight <= this.scroll.clientHeight + 2) {
-        this.scroll.scrollLeft += e.deltaY;
+      } else if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+        // tekerlek: sağa-sola kaydır. Shift ile ya da iz adlarının üstündeyken aşağı-yukarı.
+        const overHead = e.clientX - this.scroll.getBoundingClientRect().left < HEAD_W;
+        if (e.shiftKey || overHead) {
+          if (e.shiftKey) { e.preventDefault(); this.scroll.scrollTop += e.deltaY; }
+          return;
+        }
+        e.preventDefault();
+        const k = e.deltaMode === 1 ? 30 : e.deltaMode === 2 ? this.scroll.clientWidth : 1;
+        this.scroll.scrollLeft += e.deltaY * k;
       }
     }, { passive: false });
   },
@@ -285,22 +293,71 @@ const TL = {
     window.addEventListener('pointerup', onUp);
   },
 
+  /* Boş alanı tutup sürükle: görünümü kaydır (el aracı). Sürüklemeden tıkla: oynatma çizgisini taşı. */
   laneDown(e) {
-    if (e.button !== 0) return;
-    if (state.selected || state.multi.size) { state.selected = null; state.multi.clear(); refresh({ timeline: false }); this.markSelected(); }
-    this.scrubStart(e);
-  },
-
-  scrubStart(e) {
+    if (e.button !== 0 && e.button !== 1) return;
+    e.preventDefault();
+    const sx = e.clientX, sy = e.clientY, sl = this.scroll.scrollLeft, st = this.scroll.scrollTop;
+    let panning = false;
     const move = ev => {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      if (!panning && Math.hypot(dx, dy) < 4) return;
+      if (!panning) { panning = true; document.body.classList.add('panning'); }
+      this.scroll.scrollLeft = sl - dx;
+      this.scroll.scrollTop = st - dy;
+    };
+    const up = ev => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.classList.remove('panning');
+      if (panning || e.button !== 0) return;
+      if (state.selected || state.multi.size) { state.selected = null; state.multi.clear(); refresh({ timeline: false }); this.markSelected(); }
       let t = Math.max(0, this.timeAt(ev.clientX));
-      if (state.snap && !ev.shiftKey) { const s = this.snapVal(t, this.snapPoints(null).slice(2)); t = s.v; }
+      if (state.snap && !ev.shiftKey) t = this.snapVal(t, this.snapPoints(null).slice(2)).v;
       Engine.seek(t);
     };
-    move(e);
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+  },
+
+  /* Cetvelde sürükle: oynatma çizgisini taşı; kenara gelince görünüm kendiliğinden kayar */
+  scrubStart(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    if (state.playing) Engine.pause();
+    let lastX = e.clientX, lastShift = e.shiftKey;
+    const apply = () => {
+      let t = Math.max(0, this.timeAt(lastX));
+      if (state.snap && !lastShift) t = this.snapVal(t, this.snapPoints(null).slice(2)).v;
+      Engine.seek(t);
+    };
+    const move = ev => { lastX = ev.clientX; lastShift = ev.shiftKey; apply(); };
+    const timer = setInterval(() => {
+      const r = this.scroll.getBoundingClientRect();
+      const left = r.left + HEAD_W, edge = 40;
+      let v = 0;
+      if (lastX < left + edge) v = -(left + edge - lastX);
+      else if (lastX > r.right - edge) v = lastX - (r.right - edge);
+      if (v) { this.scroll.scrollLeft += clamp(v, -60, 60) * 0.6; apply(); }
+    }, 16);
+    apply();
+    const up = () => { clearInterval(timer); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  },
+
+  /* Klibi görünür alana getirir ve kısa süre parlatır */
+  reveal(id) {
+    const el = this.inner && this.inner.querySelector(`.clip[data-clip="${id}"]`);
+    if (!el) return;
+    const sr = this.scroll.getBoundingClientRect(), er = el.getBoundingClientRect();
+    const rulerH = 26;
+    if (er.bottom > sr.bottom - 4 || er.top < sr.top + rulerH) this.scroll.scrollTop += er.top - sr.top - rulerH - (sr.height - rulerH) / 2 + er.height / 2;
+    const x = parseFloat(el.style.left);
+    const vw = this.scroll.clientWidth - HEAD_W;
+    if (x < this.scroll.scrollLeft || x > this.scroll.scrollLeft + vw - 40) this.scroll.scrollLeft = Math.max(0, x - 40);
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1600);
   },
 
   markSelected() {
