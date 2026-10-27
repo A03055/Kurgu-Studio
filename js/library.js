@@ -4,13 +4,27 @@
 
 const FONTS = [
   { id: 'Inter', name: 'Modern', stack: 'Inter, "Segoe UI", Roboto, Arial, sans-serif' },
-  { id: 'Impact', name: 'Kalın Başlık', stack: 'Impact, "Arial Black", "Haettenschweiler", sans-serif' },
-  { id: 'Georgia', name: 'Klasik', stack: 'Georgia, "Times New Roman", serif' },
+  { id: 'Montserrat', name: 'Montserrat', stack: 'Montserrat, sans-serif' },
+  { id: 'Poppins', name: 'Poppins', stack: 'Poppins, sans-serif' },
+  { id: 'Fredoka', name: 'Yuvarlak', stack: 'Fredoka, sans-serif' },
+  { id: 'Bebas', name: 'BEBAS', stack: '"Bebas Neue", Impact, sans-serif' },
+  { id: 'Anton', name: 'Anton', stack: 'Anton, Impact, sans-serif' },
+  { id: 'Impact', name: 'Kalın Başlık', stack: 'Impact, "Arial Black", Anton, sans-serif' },
+  { id: 'Oswald', name: 'Oswald', stack: 'Oswald, sans-serif' },
+  { id: 'Bangers', name: 'ÇİZGİ ROMAN', stack: 'Bangers, Impact, sans-serif' },
+  { id: 'Lilita', name: 'Lilita', stack: '"Lilita One", sans-serif' },
+  { id: 'Righteous', name: 'Righteous', stack: 'Righteous, sans-serif' },
+  { id: 'Georgia', name: 'Klasik', stack: '"Playfair Display", Georgia, serif' },
+  { id: 'Slab', name: 'Slab', stack: '"Roboto Slab", Georgia, serif' },
+  { id: 'Lobster', name: 'Lobster', stack: 'Lobster, cursive' },
+  { id: 'Pacifico', name: 'Pacifico', stack: 'Pacifico, cursive' },
+  { id: 'Dancing', name: 'Dans', stack: '"Dancing Script", cursive' },
+  { id: 'Brush', name: 'El yazısı', stack: '"Great Vibes", "Brush Script MT", cursive' },
+  { id: 'Caveat', name: 'Not defteri', stack: 'Caveat, cursive' },
+  { id: 'Marker', name: 'Keçeli kalem', stack: '"Permanent Marker", cursive' },
+  { id: 'Pixel', name: 'PİKSEL', stack: '"Press Start 2P", monospace' },
   { id: 'Courier', name: 'Daktilo', stack: '"Courier New", Courier, monospace' },
-  { id: 'Comic', name: 'Eğlenceli', stack: '"Comic Sans MS", "Comic Neue", "Chalkboard SE", cursive' },
-  { id: 'Trebuchet', name: 'Yumuşak', stack: '"Trebuchet MS", "Segoe UI", sans-serif' },
-  { id: 'Brush', name: 'El yazısı', stack: '"Brush Script MT", "Segoe Script", "Lucida Handwriting", cursive' },
-  { id: 'Verdana', name: 'Geniş', stack: 'Verdana, Geneva, sans-serif' },
+  { id: 'Comic', name: 'Eğlenceli', stack: '"Comic Sans MS", "Comic Neue", Fredoka, cursive' },
 ];
 const fontStack = id => (FONTS.find(f => f.id === id) || FONTS[0]).stack;
 
@@ -35,6 +49,12 @@ const TRANSITIONS = [
   { id: 'pixel', name: 'Piksel' },
   { id: 'split', name: 'Bölünme' },
   { id: 'blinds', name: 'Jaluzi' },
+  { id: 'clock', name: 'Saat' },
+  { id: 'heart', name: 'Kalp' },
+  { id: 'flip', name: 'Çevir' },
+  { id: 'door', name: 'Kapı' },
+  { id: 'crossZoom', name: 'Hızlı zoom' },
+  { id: 'swipeBlur', name: 'Hızlı kaydır' },
 ];
 
 const EFFECTS = [
@@ -68,6 +88,22 @@ const EFFECTS = [
   { id: 'dream', name: 'Rüya', cat: 'Stil' },
   { id: 'frame', name: 'Polaroid çerçeve', cat: 'Stil' },
   { id: 'rec', name: 'Kamera REC', cat: 'Stil' },
+  { id: 'duotone', name: 'Duoton', cat: 'Stil' },
+  { id: 'heartbeat', name: 'Kalp atışı', cat: 'Dinamik' },
+  { id: 'tvoff', name: 'TV kapanış', cat: 'Retro' },
+  { id: 'dust', name: 'Toz', cat: 'Retro' },
+  { id: 'bokeh', name: 'Bokeh', cat: 'Işık' },
+  { id: 'fireflies', name: 'Ateş böceği', cat: 'Parçacık' },
+];
+
+const MASKS = [
+  { id: 'none', name: 'Yok' }, { id: 'rect', name: 'Dikdörtgen' }, { id: 'circle', name: 'Daire' },
+  { id: 'heart', name: 'Kalp' }, { id: 'star', name: 'Yıldız' }, { id: 'linear', name: 'Doğrusal' }, { id: 'band', name: 'Şerit' },
+];
+
+const AUDIO_FX = [
+  { id: 'none', name: 'Yok' }, { id: 'echo', name: 'Yankı' }, { id: 'hall', name: 'Salon' }, { id: 'radio', name: 'Radyo' },
+  { id: 'phone', name: 'Telefon' }, { id: 'robot', name: 'Robot' }, { id: 'underwater', name: 'Su altı' }, { id: 'megaphone', name: 'Megafon' },
 ];
 
 const FILTER_PRESETS = [
@@ -112,17 +148,23 @@ const ANIMS_LOOP = [
 
 const TEXT_PRESETS = [
   { name: 'Düz metin', css: 'font-weight:600', text: { content: 'Metin ekle', size: 80 } },
-  { name: 'BAŞLIK', css: 'font-family:Impact,sans-serif;letter-spacing:1px;-webkit-text-stroke:1px #000', text: { content: 'BAŞLIK', font: 'Impact', size: 150, strokeW: 6, stroke: '#000000' }, y: -0.28, anim: 'pop' },
+  { name: 'BAŞLIK', css: 'font-family:Anton,Impact,sans-serif;letter-spacing:1px;-webkit-text-stroke:1px #000', text: { content: 'BAŞLIK', font: 'Anton', size: 150, strokeW: 6, stroke: '#000000' }, y: -0.28, anim: 'pop' },
   { name: 'Altyazı', css: 'background:rgba(0,0,0,.65);padding:2px 6px;border-radius:4px;font-weight:500', text: { content: 'Altyazı metni', size: 54, bold: false, bgOn: true, bg: '#000000', bgOpacity: 0.65 }, y: 0.38, anim: 'fade' },
   { name: 'Neon', css: 'color:#7ff;text-shadow:0 0 6px #0ff,0 0 12px #0ff', text: { content: 'NEON', size: 130, color: '#88ffff', shadow: 40, shadowColor: '#00e5ff' }, anim: 'fade', loop: 'pulse' },
   { name: 'Vurgu', css: 'background:#ffd400;color:#111;padding:2px 8px;border-radius:4px;font-weight:800', text: { content: 'Vurgulu', size: 90, color: '#111111', bgOn: true, bg: '#ffd400', bgOpacity: 1 }, anim: 'pop' },
-  { name: 'Retro', css: 'font-family:Georgia,serif;font-style:italic;color:#ff5fa2;-webkit-text-stroke:1px #2b0a3d', text: { content: 'Retro', font: 'Georgia', italic: true, size: 120, color: '#ff5fa2', strokeW: 5, stroke: '#2b0a3d' }, anim: 'slideUp' },
-  { name: 'Oyun', css: 'font-family:Impact,sans-serif;color:#ffe14d;-webkit-text-stroke:1px #c00', text: { content: 'LEVEL UP!', font: 'Impact', size: 130, color: '#ffe14d', strokeW: 7, stroke: '#cc0000', shadow: 12, shadowColor: '#000000' }, anim: 'bounce' },
-  { name: 'Zarif', css: 'font-family:Georgia,serif;letter-spacing:3px;font-weight:300', text: { content: 'z a r i f', font: 'Georgia', bold: false, size: 90, letter: 12 }, anim: 'blur' },
+  { name: 'Retro', css: 'font-family:Lobster,cursive;color:#ff5fa2;-webkit-text-stroke:1px #2b0a3d;font-size:18px', text: { content: 'Retro', font: 'Lobster', italic: false, size: 120, color: '#ff5fa2', strokeW: 5, stroke: '#2b0a3d' }, anim: 'slideUp' },
+  { name: 'Oyun', css: 'font-family:Bangers,Impact,sans-serif;color:#ffe14d;-webkit-text-stroke:1px #c00;font-size:18px;letter-spacing:1px', text: { content: 'LEVEL UP!', font: 'Bangers', size: 130, color: '#ffe14d', strokeW: 7, stroke: '#cc0000', shadow: 12, shadowColor: '#000000' }, anim: 'bounce' },
+  { name: 'Zarif', css: 'font-family:Playfair Display,Georgia,serif;letter-spacing:3px', text: { content: 'z a r i f', font: 'Georgia', bold: false, size: 90, letter: 12 }, anim: 'blur' },
   { name: 'Daktilo', css: 'font-family:Courier New,monospace', text: { content: 'Bir varmış, bir yokmuş...', font: 'Courier', size: 64, typewriter: true, bold: false } },
-  { name: 'El yazısı', css: 'font-family:Brush Script MT,cursive;font-size:18px', text: { content: 'Sevgiyle', font: 'Brush', size: 140, bold: false, color: '#fff3d6', shadow: 10, shadowColor: '#000000' }, anim: 'fade' },
+  { name: 'El yazısı', css: 'font-family:Great Vibes,cursive;font-size:20px', text: { content: 'Sevgiyle', font: 'Brush', size: 140, bold: false, color: '#fff3d6', shadow: 10, shadowColor: '#000000' }, anim: 'fade' },
   { name: 'Etiket', css: 'background:#ff3d71;color:#fff;padding:2px 8px;border-radius:12px;font-weight:700', text: { content: 'YENİ', size: 70, bgOn: true, bg: '#ff3d71', bgOpacity: 1 }, x: 0.3, y: -0.35, anim: 'pop', loop: 'wobble' },
   { name: 'Abone ol', css: 'background:#e00;color:#fff;padding:2px 8px;border-radius:4px;font-weight:800', text: { content: '▶ ABONE OL', size: 72, bgOn: true, bg: '#ee0000', bgOpacity: 1 }, y: 0.32, anim: 'bounce', loop: 'pulse' },
+  { name: 'Tatil', css: 'font-family:Pacifico,cursive;color:#fff;text-shadow:0 2px 0 #ff6a3d;font-size:16px', text: { content: 'Yaz Tatili', font: 'Pacifico', size: 120, bold: false, color: '#ffffff', shadow: 0, strokeW: 5, stroke: '#ff6a3d' }, anim: 'bounce' },
+  { name: 'PİKSEL', css: 'font-family:\'Press Start 2P\',monospace;font-size:10px;color:#7CFF6B', text: { content: 'GAME OVER', font: 'Pixel', size: 70, bold: false, color: '#7CFF6B', shadow: 20, shadowColor: '#00ff44' }, anim: 'pop', loop: 'pulse' },
+  { name: 'Sinema', css: 'font-family:Bebas Neue,sans-serif;letter-spacing:4px;font-size:18px', text: { content: 'BİR FİLM', font: 'Bebas', size: 130, bold: false, letter: 18 }, anim: 'fade', loop: 'kenIn' },
+  { name: 'Not', css: 'font-family:Caveat,cursive;font-size:20px;color:#fffbe0', text: { content: 'unutma!', font: 'Caveat', size: 110, color: '#fffbe0', bgOn: true, bg: '#2b2b2b', bgOpacity: 0.5 }, anim: 'slideUp' },
+  { name: 'Keçeli', css: 'font-family:Permanent Marker,cursive;color:#ff3d71;font-size:16px', text: { content: 'WOW!', font: 'Marker', size: 140, color: '#ff3d71', strokeW: 4, stroke: '#ffffff' }, anim: 'pop', loop: 'wobble' },
+  { name: 'Modern', css: 'font-family:Montserrat,sans-serif;font-weight:700;letter-spacing:2px', text: { content: 'MODERN', font: 'Montserrat', size: 100, letter: 10 }, anim: 'slideRight' },
 ];
 
 const STICKERS = {

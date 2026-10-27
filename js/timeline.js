@@ -139,7 +139,7 @@ const TL = {
   clipEl(c, tr) {
     const z = state.zoom;
     const dur = clipDur(c);
-    const el = h('div', { class: `clip k-${c.kind}${state.selected === c.id ? ' sel' : ''}`, 'data-clip': c.id });
+    const el = h('div', { class: `clip k-${c.kind}${state.selected === c.id ? ' sel' : ''}${state.multi.has(c.id) ? ' msel' : ''}`, 'data-clip': c.id });
     el.style.left = (c.start * z) + 'px';
     el.style.width = Math.max(4, dur * z) + 'px';
     const m = state.media.get(c.mediaId);
@@ -156,7 +156,11 @@ const TL = {
     } else if (c.mediaId) el.classList.add('missing');
     const badges = [];
     if (isMediaKind(c.kind) && c.speed !== 1) badges.push(`${c.speed}x`);
-    if (c.kind === 'video' || c.kind === 'audio') if (c.volume === 0) badges.push('🔇');
+    if (c.kind === 'video' || c.kind === 'audio') if (c.volume === 0 && !kfList(c, 'volume')) badges.push('🔇');
+    if (c.afx && c.afx !== 'none') badges.push('🎛');
+    if (c.duck) badges.push('↘');
+    if (c.key && c.key.on) badges.push('🟩');
+    if (c.mask && c.mask.type !== 'none') badges.push('◐');
     if (c.filters && Object.keys(DEFAULT_FILTERS).some(k => c.filters[k] !== DEFAULT_FILTERS[k])) badges.push('🎨');
     if ((c.anim && c.anim !== 'none') || (c.animOut && c.animOut !== 'none') || (c.loop && c.loop !== 'none')) badges.push('✨');
     el.appendChild(h('div', { class: 'clip-label' },
@@ -167,6 +171,15 @@ const TL = {
       h('span', { class: 'cl-dur' }, fmtShort(dur))));
     if (c.fadeIn > 0) el.appendChild(h('div', { class: 'fade-in', style: { width: (c.fadeIn * z) + 'px' } }));
     if (c.fadeOut > 0) el.appendChild(h('div', { class: 'fade-out', style: { width: (c.fadeOut * z) + 'px' } }));
+    // anahtar kareler ve ritim noktaları
+    if (c.kf) {
+      const ts = new Set();
+      for (const p of KF_PROPS) for (const k of (c.kf[p] || [])) ts.add(Math.round(k.t * 1000) / 1000);
+      for (const t of ts) el.appendChild(h('div', { class: 'kf-dot', style: { left: (t * z) + 'px' } }));
+    }
+    if (m && m.beats && (c.kind === 'audio' || c.kind === 'video')) {
+      for (const b of m.beats) if (b >= c.in && b <= c.out) el.appendChild(h('div', { class: 'beat-dot', style: { left: ((b - c.in) / c.speed * z) + 'px' } }));
+    }
     const hl = h('div', { class: 'handle hl' }), hr = h('div', { class: 'handle hr' });
     el.append(hl, hr);
     el.addEventListener('pointerdown', e => {
@@ -184,6 +197,7 @@ const TL = {
     for (const c of allClips()) {
       if (c.id === excludeId) continue;
       pts.push(c.start, clipEnd(c));
+      if (c.mediaId) { const m = state.media.get(c.mediaId); if (m && m.beats) pts.push(...beatTimes(c)); }
     }
     return pts;
   },
@@ -204,7 +218,11 @@ const TL = {
   clipDown(e, c, tr, mode) {
     e.stopPropagation();
     e.preventDefault();
-    if (state.selected !== c.id) select(c.id);
+    if (e.shiftKey || e.ctrlKey || e.metaKey) { select(c.id, true); return; }
+    if (state.multi.has(c.id)) { state.multi.delete(c.id); if (state.selected) state.multi.add(state.selected); state.selected = c.id; Inspector.render(); }
+    else if (state.selected !== c.id) select(c.id);
+    const group = mode === 'move' ? selectedClips().filter(x => x.clip !== c).map(x => ({ clip: x.clip, start: x.clip.start })) : [];
+    const groupMin = Math.min(c.start, ...group.map(g => g.start));
     const sx = e.clientX, sy = e.clientY;
     const orig = { start: c.start, in: c.in, out: c.out, end: clipEnd(c) };
     const dur = clipDur(c);
@@ -221,9 +239,11 @@ const TL = {
         const a = this.snapVal(ns, pts), b = this.snapVal(ns + dur, pts);
         if (a.hit !== null && (b.hit === null || Math.abs(a.v - ns) <= Math.abs(b.v - ns - dur))) { ns = a.v; hit = a.hit; }
         else if (b.hit !== null) { ns = b.v - dur; hit = b.hit; }
+        if (group.length) ns = Math.max(ns, orig.start - groupMin);
         c.start = Math.max(0, ns);
+        for (const g of group) g.clip.start = g.start + (c.start - orig.start);
         const under = document.elementFromPoint(ev.clientX, ev.clientY);
-        const laneEl = under && under.closest('.lane[data-track]');
+        const laneEl = !group.length && under && under.closest('.lane[data-track]');
         if (laneEl) {
           const tgt = findTrack(laneEl.dataset.track);
           if (tgt && tgt !== cur && acceptsKind(tgt, c.kind)) {
@@ -258,7 +278,7 @@ const TL = {
       document.body.classList.remove('dragging');
       this.showSnapLine(null);
       if (!moved) return;
-      if (mode === 'move') c.start = findFreeStart(cur, c, c.start);
+      if (mode === 'move' && !group.length) c.start = findFreeStart(cur, c, c.start);
       refresh();
     };
     window.addEventListener('pointermove', onMove);
@@ -267,7 +287,7 @@ const TL = {
 
   laneDown(e) {
     if (e.button !== 0) return;
-    if (state.selected) { state.selected = null; refresh({ timeline: false }); this.markSelected(); }
+    if (state.selected || state.multi.size) { state.selected = null; state.multi.clear(); refresh({ timeline: false }); this.markSelected(); }
     this.scrubStart(e);
   },
 
@@ -284,7 +304,10 @@ const TL = {
   },
 
   markSelected() {
-    $$('.clip', this.inner).forEach(el => el.classList.toggle('sel', el.dataset.clip === state.selected));
+    $$('.clip', this.inner).forEach(el => {
+      el.classList.toggle('sel', el.dataset.clip === state.selected);
+      el.classList.toggle('msel', state.multi.has(el.dataset.clip));
+    });
   },
 
   updatePlayhead() {

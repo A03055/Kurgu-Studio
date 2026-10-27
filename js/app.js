@@ -15,7 +15,11 @@ function refresh({ timeline = true, inspector = true } = {}) {
   Store.saveProject();
 }
 
-function select(id) {
+function select(id, additive = false) {
+  if (additive && id) {
+    if (state.selected && state.selected !== id) state.multi.add(state.selected);
+    if (state.multi.has(id)) { state.multi.delete(id); id = [...state.multi].pop() || null; if (id) state.multi.delete(id); }
+  } else state.multi.clear();
   state.selected = id;
   TL.markSelected();
   Inspector.render();
@@ -29,45 +33,49 @@ function updateTransport() {
 }
 
 /* ---- düzenleme komutları ---- */
+function splitClip(clip, track, t) {
+  if (t <= clip.start + 0.03 || t >= clipEnd(clip) - 0.03) return null;
+  const origEnd = clipEnd(clip);
+  const c2 = JSON.parse(JSON.stringify(clip));
+  c2.id = uid();
+  splitKf(clip, c2, t - clip.start, t);
+  if (isMediaKind(clip.kind)) {
+    const cut = clip.in + (t - clip.start) * clip.speed;
+    clip.out = cut; c2.in = cut; c2.start = t;
+  } else {
+    clip.in = 0; clip.out = t - clip.start;
+    c2.in = 0; c2.out = origEnd - t; c2.start = t;
+  }
+  clip.fadeOut = 0; clip.animOut = 'none';
+  c2.fadeIn = 0; c2.anim = 'none'; c2.transition = null;
+  if (c2.text) c2.text.typewriter = false;
+  track.clips.push(c2);
+  return c2;
+}
+
 function splitSelected() {
   const t = state.time;
-  let targets = [];
-  const sel = findClip(state.selected);
-  if (sel) targets = [sel];
-  else {
+  let targets = selectedClips();
+  if (!targets.length) {
     for (const track of state.project.tracks) for (const clip of track.clips) if (t > clip.start && t < clipEnd(clip)) targets.push({ clip, track });
   }
   targets = targets.filter(({ clip }) => t > clip.start + 0.03 && t < clipEnd(clip) - 0.03);
   if (!targets.length) return toast('Bölmek için oynatma çizgisini bir klibin üzerine getir');
   History.checkpoint();
   let last = null;
-  for (const { clip, track } of targets) {
-    const origEnd = clipEnd(clip);
-    const c2 = JSON.parse(JSON.stringify(clip));
-    c2.id = uid();
-    if (isMediaKind(clip.kind)) {
-      const cut = clip.in + (t - clip.start) * clip.speed;
-      clip.out = cut; c2.in = cut; c2.start = t;
-    } else {
-      clip.in = 0; clip.out = t - clip.start;
-      c2.in = 0; c2.out = origEnd - t; c2.start = t;
-    }
-    clip.fadeOut = 0; clip.animOut = 'none';
-    c2.fadeIn = 0; c2.anim = 'none'; c2.transition = null;
-    if (c2.text) c2.text.typewriter = false;
-    track.clips.push(c2);
-    last = c2;
-  }
+  for (const { clip, track } of targets) last = splitClip(clip, track, t) || last;
+  state.multi.clear();
   state.selected = last ? last.id : state.selected;
   refresh();
 }
 
 function deleteSelected() {
-  const sel = findClip(state.selected);
-  if (!sel) return;
+  const sel = selectedClips();
+  if (!sel.length) return;
   History.checkpoint();
-  sel.track.clips = sel.track.clips.filter(c => c !== sel.clip);
+  for (const { clip, track } of sel) track.clips = track.clips.filter(c => c !== clip);
   state.selected = null;
+  state.multi.clear();
   refresh();
 }
 
@@ -84,14 +92,20 @@ function rippleDeleteSelected() {
 }
 
 function duplicateSelected() {
-  const sel = findClip(state.selected);
-  if (!sel) return;
+  const sel = selectedClips();
+  if (!sel.length) return;
   History.checkpoint();
-  const c2 = JSON.parse(JSON.stringify(sel.clip));
-  c2.id = uid();
-  sel.track.clips.push(c2);
-  c2.start = findFreeStart(sel.track, c2, clipEnd(sel.clip));
-  state.selected = c2.id;
+  const span0 = Math.min(...sel.map(x => x.clip.start)), span1 = Math.max(...sel.map(x => clipEnd(x.clip)));
+  let last = null;
+  for (const { clip, track } of sel) {
+    const c2 = JSON.parse(JSON.stringify(clip));
+    c2.id = uid();
+    track.clips.push(c2);
+    c2.start = findFreeStart(track, c2, clip.start + (span1 - span0));
+    last = c2;
+  }
+  state.multi.clear();
+  state.selected = last.id;
   refresh();
 }
 
@@ -207,6 +221,22 @@ function initCanvasInteraction() {
   cv.addEventListener('pointerdown', e => {
     if (state.playing) Engine.pause();
     const [px, py] = canvasPoint(e);
+    if (state.picking) {
+      const pk = findClip(state.picking);
+      const b = pk && Engine.bounds.get(pk.clip.id);
+      state.picking = null;
+      cv.classList.remove('picking');
+      if (b && b.src) {
+        let [lx, ly] = Engine.toLocal(b, px, py);
+        if (pk.clip.flipX) lx = -lx;
+        History.checkpoint();
+        pk.clip.key.color = GLFX.pickColor(b.src, b.sw, b.sh, lx / b.w + 0.5, ly / b.h + 0.5);
+        pk.clip.key.on = true;
+        afterEdit(); Inspector.render();
+        toast('Renk seçildi: ' + pk.clip.key.color, 'ok');
+      }
+      return;
+    }
     let mode = null, c = null;
     const handle = state.selected && Engine.handleAt(px, py);
     if (handle) { mode = handle; c = findClip(state.selected).clip; }
@@ -217,7 +247,8 @@ function initCanvasInteraction() {
       mode = 'move';
     }
     const b = Engine.bounds.get(c.id);
-    const o = { x: c.x, y: c.y, scale: c.scale, rotation: c.rotation };
+    const T = state.time;
+    const o = { x: prop(c, 'x', T), y: prop(c, 'y', T), scale: prop(c, 'scale', T), rotation: prop(c, 'rotation', T) };
     const d0 = Math.hypot(px - b.cx, py - b.cy) || 1;
     const a0 = Math.atan2(py - b.cy, px - b.cx);
     let moved = false;
@@ -230,21 +261,21 @@ function initCanvasInteraction() {
         // merkeze yapış
         if (Math.abs(nx) < 0.012) nx = 0;
         if (Math.abs(ny) < 0.012) ny = 0;
-        c.x = nx; c.y = ny;
+        setProp(c, 'x', nx); setProp(c, 'y', ny);
       } else if (mode === 'scale') {
-        c.scale = clamp(o.scale * Math.hypot(qx - b.cx, qy - b.cy) / d0, 0.05, 8);
+        setProp(c, 'scale', clamp(o.scale * Math.hypot(qx - b.cx, qy - b.cy) / d0, 0.05, 8));
       } else if (mode === 'rotate') {
         let r = o.rotation + (Math.atan2(qy - b.cy, qx - b.cx) - a0) * 180 / Math.PI;
         r = ((r + 540) % 360) - 180;
         for (const sn of [-180, -90, 0, 90, 180]) if (Math.abs(r - sn) < 4) r = sn;
-        c.rotation = Math.round(r);
+        setProp(c, 'rotation', Math.round(r));
       }
       Engine.dirty = true;
     };
     const up = () => {
       cv.removeEventListener('pointermove', move);
       cv.removeEventListener('pointerup', up);
-      if (moved) { Inspector.render(); Store.saveProject(); }
+      if (moved) { Inspector.render(); Store.saveProject(); TL.render(); }
     };
     cv.addEventListener('pointermove', move);
     cv.addEventListener('pointerup', up);
@@ -253,6 +284,7 @@ function initCanvasInteraction() {
     if (e.buttons) return;
     const [px, py] = canvasPoint(e);
     const hnd = state.selected && Engine.handleAt(px, py);
+    if (state.picking) { cv.style.cursor = 'crosshair'; return; }
     cv.style.cursor = hnd === 'rotate' ? 'grab' : hnd === 'scale' ? 'nwse-resize' : Engine.hitTest(px, py) ? 'move' : 'default';
   });
   cv.addEventListener('dblclick', e => {
@@ -264,7 +296,7 @@ function initCanvasInteraction() {
     if (!sel || !isVisual(sel.clip.kind)) return;
     e.preventDefault();
     History.checkpoint();
-    sel.clip.scale = clamp(sel.clip.scale * (e.deltaY < 0 ? 1.05 : 1 / 1.05), 0.05, 8);
+    setProp(sel.clip, 'scale', clamp(prop(sel.clip, 'scale', state.time) * (e.deltaY < 0 ? 1.05 : 1 / 1.05), 0.05, 8));
     Engine.dirty = true;
     renderInspectorLater();
     Store.saveProject();
@@ -313,16 +345,27 @@ function initKeys() {
     else if (mod && k.toLowerCase() === 'd') { e.preventDefault(); duplicateSelected(); }
     else if (mod && k.toLowerCase() === 'b') { e.preventDefault(); splitSelected(); }
     else if (mod && k.toLowerCase() === 'e') { e.preventDefault(); Exporter.open(); }
+    else if (mod && k.toLowerCase() === 's') { e.preventDefault(); saveProjectFile(); }
+    else if (mod && k.toLowerCase() === 'o') { e.preventDefault(); $('#openInput').click(); }
+    else if (mod && k.toLowerCase() === 'a') { e.preventDefault(); selectAll(); }
     else if (!mod && k.toLowerCase() === 's') { e.preventDefault(); splitSelected(); }
     else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); e.shiftKey ? rippleDeleteSelected() : deleteSelected(); }
     else if (k === 'ArrowLeft') { e.preventDefault(); Engine.seek(state.time - (e.shiftKey ? 1 : frame)); }
     else if (k === 'ArrowRight') { e.preventDefault(); Engine.seek(state.time + (e.shiftKey ? 1 : frame)); }
     else if (k === 'Home') { e.preventDefault(); Engine.seek(0); }
     else if (k === 'End') { e.preventDefault(); Engine.seek(projectDuration()); }
-    else if (k === 'Escape') { hideContextMenu(); if (state.selected) select(null); }
+    else if (k === 'Escape') { hideContextMenu(); state.picking = null; Engine.canvas.classList.remove('picking'); if (VoiceRec.rec) VoiceRec.stop(); else if (state.selected) select(null); }
     else if (k === '+' || k === '=') TL.setZoom(state.zoom * 1.25);
     else if (k === '-') TL.setZoom(state.zoom / 1.25);
   });
+}
+
+function selectAll() {
+  const ids = allClips().map(c => c.id);
+  if (!ids.length) return;
+  state.multi = new Set(ids.slice(0, -1));
+  state.selected = ids[ids.length - 1];
+  TL.markSelected(); Inspector.render();
 }
 
 /* ---- zaman çizelgesi yüksekliği ---- */
@@ -396,10 +439,26 @@ async function main() {
   $('#btnFull').innerHTML = icon('full');
   $('#btnExport').innerHTML = icon('download', 16) + '<span>Dışa aktar</span>';
   $('#btnNew').innerHTML = icon('file', 16) + '<span>Yeni</span>';
+  $('#btnOpen').innerHTML = icon('upload', 16) + '<span>Aç</span>';
+  $('#btnSave').innerHTML = icon('download', 16) + '<span>Kaydet</span>';
+  $('#btnRec').innerHTML = icon('mic');
+  $('#btnOpen').onclick = () => $('#openInput').click();
+  $('#openInput').addEventListener('change', e => { if (e.target.files[0]) openProjectFile(e.target.files[0]); e.target.value = ''; });
+  $('#btnSave').onclick = saveProjectFile;
+  $('#btnRec').onclick = () => VoiceRec.toggle();
+  $('#recStop').onclick = () => VoiceRec.stop();
 
   await Store.init();
   Engine.init($('#preview'));
-  Engine.onTick = () => { TL.updatePlayhead(); updateTransport(); };
+  let lastKfT = -1;
+  Engine.onTick = () => {
+    TL.updatePlayhead(); updateTransport();
+    if (!state.playing && state.time !== lastKfT) {
+      lastKfT = state.time;
+      const s = findClip(state.selected);
+      if (s && hasAnyKf(s.clip)) renderInspectorLater();
+    }
+  };
   Engine.onPlayState = p => { $('#btnPlay').innerHTML = icon(p ? 'pause' : 'play', 22); $('#btnPlay').classList.toggle('on', p); };
   TL.init();
   Panels.init();

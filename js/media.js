@@ -21,6 +21,7 @@ async function importFiles(files) {
   const list = [...files];
   let added = 0;
   for (const f of list) {
+    if (/\.kurgu$/i.test(f.name)) { await openProjectFile(f); continue; }
     const kind = detectKind(f);
     if (!kind) { toast(`Desteklenmeyen dosya: ${f.name}`, 'err'); continue; }
     const m = { id: uid(), name: f.name, kind, blob: f, url: URL.createObjectURL(f), loading: true, duration: 0 };
@@ -129,18 +130,41 @@ async function analyzeMedia(m) {
   }
   el.removeAttribute('src'); el.load();
   if (m.blob.size < 250 * 1024 * 1024) {
-    try { m.wave = await makeWaveform(m.blob); } catch (e) { m.wave = null; }
+    try { const r = await makeWaveform(m.blob); m.wave = r.wave; m.peaks = r.peaks; } catch (e) { m.wave = null; }
   }
 }
 
-async function makeWaveform(blob) {
+async function decodeAudio(blob) {
   const buf = await blob.arrayBuffer();
   const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   const ac = new AC(1, 2, 44100);
-  const audio = await new Promise((res, rej) => {
+  return new Promise((res, rej) => {
     const p = ac.decodeAudioData(buf, res, rej);
     if (p && p.then) p.then(res, rej);
   });
+}
+
+const PEAK_RATE = 50; // saniyede 50 ölçüm
+
+/* Ses seviyesi (RMS) dizisi: ritim bulma ve sessizlik silme için */
+function computePeaks(audio) {
+  const ch = [];
+  for (let c = 0; c < Math.min(2, audio.numberOfChannels); c++) ch.push(audio.getChannelData(c));
+  const step = Math.max(1, Math.floor(audio.sampleRate / PEAK_RATE));
+  const n = Math.floor(ch[0].length / step);
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    let sum = 0, cnt = 0;
+    for (let j = i * step; j < (i + 1) * step; j += 2) {
+      let v = 0; for (const d of ch) v += d[j];
+      v /= ch.length; sum += v * v; cnt++;
+    }
+    out[i] = Math.round(Math.sqrt(sum / Math.max(1, cnt)) * 10000) / 10000;
+  }
+  return out;
+}
+
+function waveImage(audio) {
   const data = audio.getChannelData(0);
   const N = 1200, step = Math.max(1, Math.floor(data.length / N));
   const peaks = new Float32Array(N);
@@ -151,6 +175,7 @@ async function makeWaveform(blob) {
     for (let j = s; j < e; j += 4) { const v = Math.abs(data[j]); if (v > p) p = v; }
     peaks[i] = p; if (p > max) max = p;
   }
+  if (max < 0.003) return null; // sessiz kayıt
   const c = document.createElement('canvas');
   c.width = N; c.height = 64;
   const ctx = c.getContext('2d');
@@ -160,6 +185,73 @@ async function makeWaveform(blob) {
     ctx.fillRect(i, 32 - hgt, 1, hgt * 2);
   }
   return c.toDataURL('image/png');
+}
+
+async function makeWaveform(blob) {
+  const audio = await decodeAudio(blob);
+  return { wave: waveImage(audio), peaks: computePeaks(audio) };
+}
+
+async function ensurePeaks(m) {
+  if (m.peaks) return m.peaks;
+  const r = await makeWaveform(m.blob);
+  m.peaks = r.peaks;
+  if (!m.wave) m.wave = r.wave;
+  Store.saveMedia(m);
+  return m.peaks;
+}
+
+/* Ritim (vuruş) noktalarını bulur: ses enerjisindeki ani artışlar */
+function detectBeats(peaks) {
+  const n = peaks.length, R = PEAK_RATE;
+  if (n < R) return [];
+  const on = new Float32Array(n);
+  let maxOn = 0;
+  for (let i = 1; i < n; i++) { on[i] = Math.max(0, peaks[i] - peaks[i - 1]); if (on[i] > maxOn) maxOn = on[i]; }
+  const pre = new Float32Array(n + 1);
+  for (let i = 0; i < n; i++) pre[i + 1] = pre[i] + on[i];
+  const beats = [];
+  let last = -1e9;
+  const half = Math.floor(R * 0.6);
+  for (let i = 1; i < n - 1; i++) {
+    const a = Math.max(0, i - half), b = Math.min(n, i + half);
+    const avg = (pre[b] - pre[a]) / (b - a);
+    if (on[i] > avg * 2 && on[i] > maxOn * 0.12 && on[i] >= on[i - 1] && on[i] >= on[i + 1] && i - last > R * 0.3) {
+      beats.push(Math.round(i / R * 1000) / 1000);
+      last = i;
+    }
+  }
+  return beats;
+}
+
+/* Kaynak süre aralığında konuşma/ses olan bölümleri döndürür (sessizlikler hariç) */
+function findSoundRanges(peaks, from, to, minSilence = 0.6, pad = 0.15) {
+  const R = PEAK_RATE;
+  const a = Math.max(0, Math.floor(from * R)), b = Math.min(peaks.length, Math.ceil(to * R));
+  const seg = peaks.slice(a, b);
+  if (!seg.length) return [[from, to]];
+  const sorted = [...seg].sort((x, y) => x - y);
+  const loud = sorted[Math.floor(sorted.length * 0.95)] || 0;
+  const thr = Math.max(0.006, loud * 0.12);
+  const ranges = [];
+  let start = null, quiet = 0;
+  for (let i = a; i < b; i++) {
+    if (peaks[i] >= thr) {
+      if (start === null) start = i;
+      quiet = 0;
+    } else if (start !== null) {
+      quiet++;
+      if (quiet >= minSilence * R) { ranges.push([start, i - quiet + 1]); start = null; quiet = 0; }
+    }
+  }
+  if (start !== null) ranges.push([start, b]);
+  const out = [];
+  for (const [s, e] of ranges) {
+    const s2 = Math.max(from, s / R - pad), e2 = Math.min(to, e / R + pad);
+    if (out.length && s2 <= out[out.length - 1][1]) out[out.length - 1][1] = e2;
+    else if (e2 - s2 > 0.08) out.push([s2, e2]);
+  }
+  return out;
 }
 
 /* Düz renk / gradyan arka plan resmi üretir */

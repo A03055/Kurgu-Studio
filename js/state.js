@@ -8,6 +8,10 @@ const DEFAULT_TEXT = {
   bgOn: false, bg: '#000000', bgOpacity: 0.6, strokeW: 0, stroke: '#000000', shadow: 0, shadowColor: '#000000',
   letter: 0, typewriter: false,
 };
+const DEFAULT_MASK = { type: 'none', x: 0, y: 0, w: 0.6, h: 0.6, rot: 0, round: 0, feather: 0, invert: false };
+const DEFAULT_KEY = { on: false, color: '#00ff00', sim: 0.15, smooth: 0.08, spill: 0.15 };
+const DEFAULT_GRADE = { temp: 0, tint: 0, shadows: 0, highlights: 0, vibrance: 0 };
+const KF_PROPS = ['x', 'y', 'scale', 'rotation', 'opacity', 'volume'];
 const TRACK_NAMES = { fx: 'Efekt', text: 'Metin', video: 'Video', audio: 'Ses' };
 const MIN_DUR = 0.1;
 
@@ -39,6 +43,7 @@ const state = {
   time: 0,
   playing: false,
   selected: null,
+  multi: new Set(),
   zoom: 60,
   snap: true,
   exporting: false,
@@ -50,6 +55,8 @@ function makeClip(kind, props = {}) {
     x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, fit: 'contain', flipX: false,
     filters: { ...DEFAULT_FILTERS }, fadeIn: 0, fadeOut: 0, anim: 'none', animOut: 'none', loop: 'none', animDur: 0.5,
     transition: null,
+    mask: { ...DEFAULT_MASK }, key: { ...DEFAULT_KEY }, grade: { ...DEFAULT_GRADE },
+    afx: 'none', enhance: false, duck: false, kf: {},
   };
   if (kind === 'text') c.text = { ...DEFAULT_TEXT };
   if (kind === 'fx') c.fx = { type: 'vignette', intensity: 0.7 };
@@ -178,7 +185,7 @@ const Store = {
   }, 500),
   saveMedia(m) {
     if (!this.ok) return;
-    const rec = { id: m.id, name: m.name, kind: m.kind, blob: m.blob, duration: m.duration, width: m.width, height: m.height, thumb: m.thumb, wave: m.wave, builtin: m.builtin || null };
+    const rec = { id: m.id, name: m.name, kind: m.kind, blob: m.blob, duration: m.duration, width: m.width, height: m.height, thumb: m.thumb, wave: m.wave, peaks: m.peaks || null, beats: m.beats || null, builtin: m.builtin || null };
     DB.put('media', rec).catch(e => { console.warn(e); toast('Dosya kaydedilemedi (disk dolu olabilir)', 'err'); });
   },
   deleteMedia(id) { if (this.ok) DB.del('media', id).catch(() => {}); },
@@ -188,8 +195,82 @@ function migrateProject(p) {
   for (const t of p.tracks) {
     for (const c of t.clips) {
       c.filters = Object.assign({ ...DEFAULT_FILTERS }, c.filters || {});
+      c.mask = Object.assign({ ...DEFAULT_MASK }, c.mask || {});
+      c.key = Object.assign({ ...DEFAULT_KEY }, c.key || {});
+      c.grade = Object.assign({ ...DEFAULT_GRADE }, c.grade || {});
+      c.kf = c.kf || {};
+      c.afx = c.afx || 'none';
       if (c.kind === 'text') c.text = Object.assign({ ...DEFAULT_TEXT }, c.text || {});
     }
   }
   return p;
+}
+
+/* ---- anahtar kareler: zaman, klip başlangıcına göre saniye ---- */
+function kfList(c, p) { const l = c.kf && c.kf[p]; return l && l.length ? l : null; }
+function hasAnyKf(c) { return !!c.kf && KF_PROPS.some(p => kfList(c, p)); }
+function prop(c, p, t) {
+  const l = kfList(c, p);
+  if (!l) return c[p];
+  const lt = t - c.start;
+  if (lt <= l[0].t) return l[0].v;
+  const last = l[l.length - 1];
+  if (lt >= last.t) return last.v;
+  for (let i = 0; i < l.length - 1; i++) {
+    const a = l[i], b = l[i + 1];
+    if (lt < b.t) {
+      let k = (lt - a.t) / Math.max(1e-6, b.t - a.t);
+      if (a.ease !== 'linear') k = k * k * (3 - 2 * k);
+      return a.v + (b.v - a.v) * k;
+    }
+  }
+  return last.v;
+}
+function kfAt(c, p, t) {
+  const l = kfList(c, p);
+  if (!l) return -1;
+  const lt = t - c.start;
+  return l.findIndex(k => Math.abs(k.t - lt) < 1 / 60);
+}
+/* Anahtar karesi olan bir özellik değişince o andaki anahtar kare güncellenir/eklenir */
+function setProp(c, p, v, t = state.time) {
+  const l = kfList(c, p);
+  if (!l) { c[p] = v; return; }
+  const lt = clamp(t - c.start, 0, clipDur(c));
+  const i = kfAt(c, p, t);
+  if (i >= 0) l[i].v = v;
+  else { l.push({ t: lt, v }); l.sort((a, b) => a.t - b.t); }
+}
+function toggleKf(c, p, t = state.time) {
+  c.kf = c.kf || {};
+  const i = kfAt(c, p, t);
+  if (i >= 0) {
+    const v = prop(c, p, t);
+    c.kf[p].splice(i, 1);
+    if (!c.kf[p].length) { delete c.kf[p]; c[p] = v; }
+    return false;
+  }
+  const v = prop(c, p, t);
+  const lt = clamp(t - c.start, 0, clipDur(c));
+  (c.kf[p] = c.kf[p] || []).push({ t: lt, v });
+  c.kf[p].sort((a, b) => a.t - b.t);
+  return true;
+}
+/* Bölmede anahtar kareleri iki parçaya paylaştırır */
+function splitKf(c, c2, off, t) {
+  if (!c.kf) return;
+  c2.kf = {};
+  for (const p of Object.keys(c.kf)) {
+    const l = c.kf[p];
+    if (!l || !l.length) continue;
+    const mid = prop(c, p, t);
+    const a = l.filter(k => k.t < off - 1e-4); a.push({ t: off, v: mid });
+    const b = l.filter(k => k.t > off + 1e-4).map(k => ({ ...k, t: k.t - off })); b.unshift({ t: 0, v: mid });
+    c.kf[p] = a; c2.kf[p] = b;
+  }
+}
+function selectedClips() {
+  const ids = new Set(state.multi);
+  if (state.selected) ids.add(state.selected);
+  return [...ids].map(findClip).filter(Boolean);
 }

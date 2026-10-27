@@ -7,7 +7,17 @@ function afterEdit(tl = false) {
   Store.saveProject();
 }
 
-function ctlSlider({ label, min, max, step = 1, get, set, fmt = v => v, def, tl = false }) {
+/* Anahtar kare destekli kaydırıcı: kf = { clip, prop } */
+function ctlKf(c, p, label, min, max, step, fmt, def) {
+  return ctlSlider({
+    label, min, max, step, fmt, def, tl: true,
+    get: () => prop(c, p, state.time),
+    set: v => setProp(c, p, v),
+    kf: { clip: c, prop: p },
+  });
+}
+
+function ctlSlider({ label, min, max, step = 1, get, set, fmt = v => v, def, tl = false, kf = null }) {
   const val = h('span', { class: 'sl-val' }, fmt(get()));
   const inp = h('input', { type: 'range', min, max, step, value: get() });
   const start = () => History.checkpoint();
@@ -16,7 +26,23 @@ function ctlSlider({ label, min, max, step = 1, get, set, fmt = v => v, def, tl 
   inp.addEventListener('input', () => { set(parseFloat(inp.value)); val.textContent = fmt(get()); afterEdit(tl); });
   const lab = h('label', { class: 'sl-label', title: def !== undefined ? 'Çift tıkla: sıfırla' : '' }, label);
   if (def !== undefined) lab.addEventListener('dblclick', () => { History.checkpoint(); set(def); inp.value = get(); val.textContent = fmt(get()); afterEdit(tl); });
-  return h('div', { class: 'ctl slider' }, h('div', { class: 'sl-top' }, lab, val), inp);
+  let kbtn = null;
+  if (kf) {
+    const on = kfAt(kf.clip, kf.prop, state.time) >= 0, has = !!kfList(kf.clip, kf.prop);
+    kbtn = h('button', {
+      class: 'kf-btn' + (on ? ' on' : has ? ' has' : ''),
+      title: on ? 'Bu anahtar kareyi sil' : 'Oynatma çizgisine anahtar kare ekle',
+      html: `<svg width="12" height="12" viewBox="0 0 24 24"><path d="M12 2 22 12 12 22 2 12z" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.5"/></svg>`,
+      onclick: () => {
+        const c = kf.clip;
+        if (state.time < c.start || state.time > clipEnd(c)) return toast('Oynatma çizgisini klibin üzerine getir');
+        History.checkpoint();
+        toggleKf(c, kf.prop);
+        afterEdit(true); Inspector.render();
+      },
+    });
+  }
+  return h('div', { class: 'ctl slider' }, h('div', { class: 'sl-top' }, h('span', { class: 'sl-label-wrap' }, lab, kbtn), val), inp);
 }
 
 function ctlSelect(label, options, get, set, tl = false) {
@@ -59,8 +85,8 @@ const Inspector = {
     if (!sel) return this.renderProject(box);
     const { clip: c, track } = sel;
     const tabsFor = {
-      video: [['basic', 'Temel'], ['adjust', 'Ayarla'], ['anim', 'Animasyon'], ['audio', 'Ses'], ['speed', 'Hız'], ['trans', 'Geçiş']],
-      image: [['basic', 'Temel'], ['adjust', 'Ayarla'], ['anim', 'Animasyon'], ['trans', 'Geçiş']],
+      video: [['basic', 'Temel'], ['adjust', 'Ayarla'], ['mask', 'Maske'], ['key', 'Yeşil ekran'], ['anim', 'Animasyon'], ['audio', 'Ses'], ['speed', 'Hız'], ['trans', 'Geçiş']],
+      image: [['basic', 'Temel'], ['adjust', 'Ayarla'], ['mask', 'Maske'], ['key', 'Yeşil ekran'], ['anim', 'Animasyon'], ['trans', 'Geçiş']],
       text: [['text', 'Metin'], ['basic', 'Konum'], ['anim', 'Animasyon']],
       audio: [['audio', 'Ses'], ['speed', 'Hız']],
       fx: [['fx', 'Efekt']],
@@ -75,11 +101,12 @@ const Inspector = {
         h('button', { class: 'ib', title: 'Böl (S)', html: icon('split', 16), onclick: splitSelected }),
         h('button', { class: 'ib', title: 'Çoğalt (Ctrl+D)', html: icon('copy', 16), onclick: duplicateSelected }),
         h('button', { class: 'ib danger', title: 'Sil (Delete)', html: icon('trash', 16), onclick: deleteSelected }))));
+    if (state.multi.size) box.appendChild(h('div', { class: 'multi-banner' }, `${state.multi.size + 1} klip seçili: silme, çoğaltma ve taşıma hepsine uygulanır`));
     box.appendChild(h('div', { class: 'insp-tabs' }, tabsFor.map(([id, name]) =>
       h('button', { class: id === tab ? 'on' : '', onclick: () => { this.tabs[c.kind] = id; this.render(); } }, name))));
     const body = h('div', { class: 'insp-body' });
     box.appendChild(body);
-    const fn = { basic: 'tabBasic', adjust: 'tabAdjust', anim: 'tabAnim', audio: 'tabAudio', speed: 'tabSpeed', trans: 'tabTrans', text: 'tabText', fx: 'tabFx' }[tab];
+    const fn = { basic: 'tabBasic', adjust: 'tabAdjust', anim: 'tabAnim', audio: 'tabAudio', speed: 'tabSpeed', trans: 'tabTrans', text: 'tabText', fx: 'tabFx', mask: 'tabMask', key: 'tabKey' }[tab];
     this[fn](body, c, track);
   },
 
@@ -103,12 +130,15 @@ const Inspector = {
       chips([{ id: 'contain', name: 'Sığdır' }, { id: 'cover', name: 'Doldur' }], () => c.fit, v => { c.fit = v; c.scale = 1; c.x = 0; c.y = 0; }),
       ctlToggle('Yatay çevir (ayna)', () => c.flipX, v => { c.flipX = v; })));
     b.appendChild(section('Dönüştür',
-      ctlSlider({ label: 'Ölçek', min: 0.05, max: 4, step: 0.01, get: () => c.scale, set: v => { c.scale = v; }, fmt: pct, def: 1 }),
-      ctlSlider({ label: 'Konum X', min: -1, max: 1, step: 0.005, get: () => c.x, set: v => { c.x = v; }, fmt: v => Math.round(v * 100), def: 0 }),
-      ctlSlider({ label: 'Konum Y', min: -1, max: 1, step: 0.005, get: () => c.y, set: v => { c.y = v; }, fmt: v => Math.round(v * 100), def: 0 }),
-      ctlSlider({ label: 'Döndür', min: -180, max: 180, step: 1, get: () => c.rotation, set: v => { c.rotation = v; }, fmt: v => v + '°', def: 0 }),
-      ctlSlider({ label: 'Opaklık', min: 0, max: 1, step: 0.01, get: () => c.opacity, set: v => { c.opacity = v; }, fmt: pct, def: 1 }),
-      h('button', { class: 'btn ghost sm', html: icon('center', 14) + ' Konumu sıfırla', onclick: () => { History.checkpoint(); Object.assign(c, { x: 0, y: 0, scale: 1, rotation: 0 }); afterEdit(); this.render(); } })));
+      ctlKf(c, 'scale', 'Ölçek', 0.05, 4, 0.01, pct, 1),
+      ctlKf(c, 'x', 'Konum X', -1, 1, 0.005, v => Math.round(v * 100), 0),
+      ctlKf(c, 'y', 'Konum Y', -1, 1, 0.005, v => Math.round(v * 100), 0),
+      ctlKf(c, 'rotation', 'Döndür', -180, 180, 1, v => Math.round(v) + '°', 0),
+      ctlKf(c, 'opacity', 'Opaklık', 0, 1, 0.01, pct, 1),
+      h('div', { class: 'btn-row' },
+        h('button', { class: 'btn ghost sm', html: icon('center', 14) + ' Konumu sıfırla', onclick: () => { History.checkpoint(); for (const p of ['x', 'y', 'scale', 'rotation']) delete c.kf[p]; Object.assign(c, { x: 0, y: 0, scale: 1, rotation: 0 }); afterEdit(true); this.render(); } }),
+        hasAnyKf(c) ? h('button', { class: 'btn ghost sm', onclick: () => { History.checkpoint(); for (const p of KF_PROPS) if (kfList(c, p)) { c[p] = prop(c, p, state.time); delete c.kf[p]; } afterEdit(true); this.render(); } }, 'Anahtar kareleri temizle') : null),
+      h('p', { class: 'hint' }, '◆ düğmesi o anki değeri anahtar kare olarak kaydeder. Oynatma çizgisini başka bir yere götürüp değeri değiştirince otomatik yeni anahtar kare eklenir ve arası yumuşakça canlandırılır.')));
     if (c.kind !== 'text') b.appendChild(section('Karışım modu', ctlSelect('Mod', [
       { id: 'normal', name: 'Normal' }, { id: 'screen', name: 'Ekran (aydınlat)' }, { id: 'multiply', name: 'Çarp (koyulaştır)' },
       { id: 'overlay', name: 'Bindirme' }, { id: 'lighten', name: 'Açık olan' }, { id: 'darken', name: 'Koyu olan' },
@@ -135,7 +165,15 @@ const Inspector = {
       s('Siyah-beyaz', 'grayscale', 0, 100, 0, '%'),
       s('Bulanıklık', 'blur', 0, 40, 0, 'px'),
       s('Negatif', 'invert', 0, 100, 0, '%'),
-      h('button', { class: 'btn ghost sm', onclick: () => { History.checkpoint(); c.filters = { ...DEFAULT_FILTERS }; afterEdit(true); this.render(); } }, 'Tümünü sıfırla')));
+      h('button', { class: 'btn ghost sm', onclick: () => { History.checkpoint(); c.filters = { ...DEFAULT_FILTERS }; c.grade = { ...DEFAULT_GRADE }; afterEdit(true); this.render(); } }, 'Tümünü sıfırla')));
+    const G = c.grade;
+    const gs = (label, key) => ctlSlider({ label, min: -1, max: 1, step: 0.01, get: () => G[key] || 0, set: v => { G[key] = v; }, fmt: v => Math.round(v * 100), def: 0 });
+    b.appendChild(section('Renk düzeltme',
+      gs('Sıcaklık (soğuk ↔ sıcak)', 'temp'),
+      gs('Renk tonu (yeşil ↔ mor)', 'tint'),
+      gs('Gölgeler', 'shadows'),
+      gs('Parlak alanlar', 'highlights'),
+      gs('Canlılık', 'vibrance')));
   },
 
   tabAnim(b, c) {
@@ -150,12 +188,64 @@ const Inspector = {
 
   tabAudio(b, c) {
     b.appendChild(section('Ses',
-      ctlSlider({ label: 'Ses seviyesi', min: 0, max: 2, step: 0.01, get: () => c.volume, set: v => { c.volume = v; }, fmt: v => Math.round(v * 100) + '%', def: 1, tl: true }),
+      ctlKf(c, 'volume', 'Ses seviyesi', 0, 2, 0.01, v => Math.round(v * 100) + '%', 1),
       ctlSlider({ label: 'Sesi aç (fade in)', min: 0, max: Math.min(10, clipDur(c)), step: 0.05, get: () => c.fadeIn, set: v => { c.fadeIn = v; }, fmt: v => v.toFixed(2) + 's', def: 0, tl: true }),
       ctlSlider({ label: 'Sesi kıs (fade out)', min: 0, max: Math.min(10, clipDur(c)), step: 0.05, get: () => c.fadeOut, set: v => { c.fadeOut = v; }, fmt: v => v.toFixed(2) + 's', def: 0, tl: true }),
       h('div', { class: 'btn-row' },
-        h('button', { class: 'btn ghost sm', html: icon('mute', 14) + ' Sessize al', onclick: () => { History.checkpoint(); c.volume = 0; afterEdit(true); this.render(); } }),
+        h('button', { class: 'btn ghost sm', html: icon('mute', 14) + ' Sessize al', onclick: () => { History.checkpoint(); delete c.kf.volume; c.volume = 0; afterEdit(true); this.render(); } }),
         c.kind === 'video' ? h('button', { class: 'btn ghost sm', html: icon('audio', 14) + ' Sesi ayır', onclick: () => detachAudio(c) }) : null)));
+    b.appendChild(section('Ses efekti', chips(AUDIO_FX, () => c.afx || 'none', v => { c.afx = v; }, true)));
+    b.appendChild(section('Akıllı ses',
+      ctlToggle('Konuşmayı netleştir (uğultu azaltma)', () => c.enhance, v => { c.enhance = v; }, true),
+      ctlToggle('Başka ses çalarken otomatik kıs (müzik için)', () => c.duck, v => { c.duck = v; }, true),
+      h('div', { class: 'action-list' },
+        h('button', { class: 'btn ghost sm', html: icon('wand', 14) + ' Sessiz yerleri sil', onclick: () => removeSilence(c) }))));
+    const m = state.media.get(c.mediaId);
+    const beats = m && m.beats;
+    b.appendChild(section('Ritim',
+      h('div', { class: 'action-list' },
+        h('button', { class: 'btn ghost sm', html: icon('audio', 14) + (beats ? ` Ritim noktaları: ${beats.length} (yeniden bul)` : ' Ritim noktalarını bul'), onclick: () => analyzeBeats(c) }),
+        beats ? h('button', { class: 'btn ghost sm', html: icon('split', 14) + ' Ana izi her vuruşta kes', onclick: () => cutMainToBeats(c, 1) }) : null,
+        beats ? h('button', { class: 'btn ghost sm', html: icon('split', 14) + ' Ana izi 2 vuruşta bir kes', onclick: () => cutMainToBeats(c, 2) }) : null,
+        beats ? h('button', { class: 'btn ghost sm', html: icon('layers', 14) + ' Klipleri ritme diz (2 vuruş)', onclick: () => fitClipsToBeats(c, 2) }) : null,
+        beats ? h('button', { class: 'btn ghost sm', html: icon('layers', 14) + ' Klipleri ritme diz (4 vuruş)', onclick: () => fitClipsToBeats(c, 4) }) : null),
+      h('p', { class: 'hint' }, 'Ritim noktaları klip üzerinde sarı çizgiyle görünür, sürüklerken klipler bu noktalara yapışır.')));
+  },
+
+  tabMask(b, c) {
+    const M = c.mask;
+    b.appendChild(section('Maske şekli', chips(MASKS, () => M.type, v => { M.type = v; if (v === 'linear' || v === 'band') { M.w = 1; } })));
+    if (M.type === 'none') { b.appendChild(h('p', { class: 'hint' }, 'Maske, görüntünün sadece seçtiğin şeklin içindeki kısmını gösterir. Yuvarlak çerçeve, bölünmüş ekran ya da geçiş efektleri için kullan.')); return; }
+    const sl = (label, key, min, max, step, fmt, def) => ctlSlider({ label, min, max, step, get: () => M[key], set: v => { M[key] = v; }, fmt, def });
+    b.appendChild(section('Ayar',
+      sl('Konum X', 'x', -1, 1, 0.005, v => Math.round(v * 100), 0),
+      sl('Konum Y', 'y', -1, 1, 0.005, v => Math.round(v * 100), 0),
+      M.type !== 'linear' && M.type !== 'band' ? sl('Genişlik', 'w', 0.02, 2, 0.01, v => Math.round(v * 100) + '%', 0.6) : null,
+      M.type !== 'linear' ? sl(M.type === 'band' ? 'Kalınlık' : 'Yükseklik', 'h', 0.02, 2, 0.01, v => Math.round(v * 100) + '%', 0.6) : null,
+      sl('Döndür', 'rot', -180, 180, 1, v => v + '°', 0),
+      M.type === 'rect' ? sl('Köşe yuvarlaklığı', 'round', 0, 100, 1, v => v + '%', 0) : null,
+      sl('Kenar yumuşaklığı', 'feather', 0, 100, 1, v => v + '%', 0),
+      ctlToggle('Tersine çevir', () => M.invert, v => { M.invert = v; }),
+      h('button', { class: 'btn ghost sm', onclick: () => { History.checkpoint(); c.mask = { ...DEFAULT_MASK, type: M.type }; afterEdit(); this.render(); } }, 'Sıfırla')));
+  },
+
+  tabKey(b, c) {
+    const K = c.key;
+    b.appendChild(section('Yeşil ekran (chroma key)',
+      ctlToggle('Arka plan rengini sil', () => K.on, v => { K.on = v; }, true),
+      ctlColor('Silinecek renk', () => K.color, v => { K.color = v; }),
+      h('div', { class: 'swatches' }, [['#00ff00', 'Yeşil'], ['#00b140', 'Koyu yeşil'], ['#0047bb', 'Mavi'], ['#ffffff', 'Beyaz'], ['#000000', 'Siyah']].map(([col, n]) =>
+        h('button', { class: 'swatch', title: n, style: { background: col }, onclick: () => { History.checkpoint(); K.color = col; K.on = true; afterEdit(true); this.render(); } }))),
+      h('button', { class: 'btn ghost sm', html: icon('palette', 14) + ' Önizlemeden renk seç (damlalık)', onclick: () => {
+        state.picking = c.id; Engine.canvas.classList.add('picking');
+        if (state.time < c.start || state.time >= clipEnd(c)) Engine.seek(c.start + 0.05);
+        toast('Önizlemede silmek istediğin renge tıkla');
+      } })));
+    if (!K.on) { b.appendChild(h('p', { class: 'hint' }, 'Yeşil/mavi perde önünde çekilmiş videonun arka planını siler. Altındaki izde başka bir video veya fotoğraf koyarak arka planı değiştir.')); return; }
+    b.appendChild(section('İnce ayar',
+      ctlSlider({ label: 'Benzerlik', min: 0, max: 0.6, step: 0.005, get: () => K.sim, set: v => { K.sim = v; }, fmt: v => Math.round(v * 100 / 0.6), def: 0.15 }),
+      ctlSlider({ label: 'Yumuşaklık', min: 0, max: 0.3, step: 0.005, get: () => K.smooth, set: v => { K.smooth = v; }, fmt: v => Math.round(v * 100 / 0.3), def: 0.08 }),
+      ctlSlider({ label: 'Renk taşmasını azalt', min: 0, max: 0.6, step: 0.005, get: () => K.spill, set: v => { K.spill = v; }, fmt: v => Math.round(v * 100 / 0.6), def: 0.15 })));
   },
 
   tabSpeed(b, c) {

@@ -1,6 +1,78 @@
 'use strict';
 /* Oynatma ve görüntü motoru: klipleri tuvale çizer, sesleri eşitler, geçiş ve efektleri uygular */
 
+/* Klip ses efektleri (Web Audio düğüm zincirleri) */
+const AudioFX = {
+  ir: null,
+  impulse(ac) {
+    if (this.ir && this.ir.sampleRate === ac.sampleRate) return this.ir;
+    const len = Math.floor(ac.sampleRate * 2.8);
+    const b = ac.createBuffer(2, len, ac.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = b.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (hash(i, c + 3) * 2 - 1) * Math.pow(1 - i / len, 2.5);
+    }
+    return (this.ir = b);
+  },
+  curve(k) {
+    const n = 1024, c = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = i * 2 / n - 1; c[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
+    return c;
+  },
+  build(ac, type, enhance) {
+    if ((!type || type === 'none') && !enhance) return null;
+    const nodes = [];
+    const add = n => { nodes.push(n); return n; };
+    const bq = (t, f, q) => { const b = add(ac.createBiquadFilter()); b.type = t; b.frequency.value = f; if (q) b.Q.value = q; return b; };
+    const input = add(ac.createGain());
+    const output = add(ac.createGain());
+    let cur = input;
+    const chain = n => { cur.connect(n); cur = n; return n; };
+    if (enhance) {
+      // konuşmayı netleştir: uğultuyu kes, anlaşılırlığı artır, seviyeyi dengele
+      chain(bq('highpass', 90, 0.7));
+      chain(bq('lowpass', 11000));
+      const pk = chain(bq('peaking', 3200, 0.9)); pk.gain.value = 4;
+      const lowcut = chain(bq('peaking', 300, 1)); lowcut.gain.value = -3;
+      const cp = chain(add(ac.createDynamicsCompressor()));
+      cp.threshold.value = -26; cp.ratio.value = 4; cp.attack.value = 0.004; cp.release.value = 0.2;
+      chain(add(ac.createGain())).gain.value = 1.7;
+    }
+    switch (type) {
+      case 'echo': {
+        const d = add(ac.createDelay(1)); d.delayTime.value = 0.28;
+        const fb = add(ac.createGain()); fb.gain.value = 0.38;
+        const wet = add(ac.createGain()); wet.gain.value = 0.5;
+        cur.connect(d); d.connect(fb); fb.connect(d); d.connect(wet); wet.connect(output);
+        break;
+      }
+      case 'hall': {
+        const cv = add(ac.createConvolver()); cv.buffer = this.impulse(ac);
+        const wet = add(ac.createGain()); wet.gain.value = 0.55;
+        cur.connect(cv); cv.connect(wet); wet.connect(output);
+        break;
+      }
+      case 'radio': case 'phone': case 'megaphone': {
+        const f = { radio: [300, 4500, 8, 0.9], phone: [450, 3000, 3, 1], megaphone: [650, 3500, 35, 0.55] }[type];
+        chain(bq('highpass', f[0], 0.8)); chain(bq('lowpass', f[1], 0.8));
+        const ws = chain(add(ac.createWaveShaper())); ws.curve = this.curve(f[2]);
+        chain(add(ac.createGain())).gain.value = f[3];
+        break;
+      }
+      case 'robot': {
+        const rm = add(ac.createGain()); rm.gain.value = 0;
+        const osc = add(ac.createOscillator()); osc.frequency.value = 55; osc.connect(rm.gain); osc.start();
+        chain(rm);
+        chain(add(ac.createGain())).gain.value = 1.8;
+        break;
+      }
+      case 'underwater': chain(bq('lowpass', 420, 2)); chain(add(ac.createGain())).gain.value = 1.4; break;
+    }
+    cur.connect(output);
+    return { input, output, nodes };
+  },
+};
+
 const Engine = {
   canvas: null, ctx: null, W: 1920, H: 1080,
   els: new Map(),
@@ -92,9 +164,28 @@ const Engine = {
     try {
       e.src = this.ac.createMediaElementSource(e.el);
       e.gain = this.ac.createGain();
-      e.src.connect(e.gain);
       e.gain.connect(this.master);
+      e.fxKey = null;
+      this.rewire(e, 'none|0');
     } catch (err) { console.warn(err); }
+  },
+  rewire(e, key) {
+    if (!e.src || e.fxKey === key) return;
+    try { e.src.disconnect(); } catch (err) { /* yok say */ }
+    if (e.chain) for (const n of e.chain.nodes) { try { n.disconnect(); if (n.stop) n.stop(); } catch (err) { /* yok say */ } }
+    const [type, enh] = key.split('|');
+    e.chain = AudioFX.build(this.ac, type, enh === '1');
+    if (e.chain) { e.src.connect(e.chain.input); e.chain.output.connect(e.gain); }
+    else e.src.connect(e.gain);
+    e.fxKey = key;
+  },
+  setLevel(x, level, tc = 0.03) {
+    if (x.lastLevel !== undefined && Math.abs(x.lastLevel - level) < 0.002) return;
+    x.lastLevel = level;
+    if (x.gain) {
+      x.el.volume = 1;
+      x.gain.gain.setTargetAtTime(level, this.ac.currentTime, state.playing ? tc : 0.001);
+    } else x.el.volume = clamp(level, 0, 1);
   },
   getEl(clip) {
     const m = state.media.get(clip.mediaId);
@@ -120,6 +211,7 @@ const Engine = {
     try { e.el.pause(); e.el.removeAttribute('src'); e.el.load(); } catch (err) { /* yok say */ }
     e.el.remove();
     try { e.src && e.src.disconnect(); e.gain && e.gain.disconnect(); } catch (err) { /* yok say */ }
+    if (e.chain) for (const n of e.chain.nodes) { try { n.disconnect(); if (n.stop) n.stop(); } catch (err) { /* yok say */ } }
     this.els.delete(id);
   },
   prune() {
@@ -181,6 +273,16 @@ const Engine = {
 
   sync(playing) {
     const t = state.time;
+    // otomatik kısma: "diğer sesler çalarken kıs" işaretli klipler, başka bir ses duyulurken kısılır
+    let voice = false;
+    for (const tr of state.project.tracks) {
+      if (tr.muted || (tr.kind !== 'audio' && tr.kind !== 'video')) continue;
+      for (const c of tr.clips) {
+        if (!isMediaKind(c.kind) || c.duck || t < c.start || t >= clipEnd(c)) continue;
+        const m = state.media.get(c.mediaId);
+        if (m && m.wave && prop(c, 'volume', t) > 0.05) { voice = true; break; }
+      }
+    }
     for (const tr of state.project.tracks) {
       for (const c of tr.clips) {
         if (!isMediaKind(c.kind)) continue;
@@ -199,9 +301,10 @@ const Engine = {
         if (active) {
           const target = c.in + (t - s) * c.speed;
           if (Math.abs(el.playbackRate - c.speed) > 0.001) el.playbackRate = c.speed;
-          const level = tr.muted ? 0 : c.volume * this.fade(c, t);
-          if (x.gain) { x.gain.gain.value = level; el.volume = 1; }
-          else el.volume = clamp(level, 0, 1);
+          if (x.gain) this.rewire(x, `${c.afx || 'none'}|${c.enhance ? 1 : 0}`);
+          let level = tr.muted ? 0 : prop(c, 'volume', t) * this.fade(c, t);
+          if (c.duck && voice) level *= 0.22;
+          this.setLevel(x, level, c.duck ? 0.12 : 0.03);
           if (playing) {
             if (el.paused) {
               if (Math.abs(el.currentTime - target) > 0.05) el.currentTime = target;
@@ -340,16 +443,19 @@ const Engine = {
   drawClip(ctx, c, t, tr) {
     const W = this.W, H = this.H;
     const a = this.animState(c, t);
-    let alpha = (c.opacity ?? 1) * this.fade(c, t) * a.alpha;
+    const P = k => prop(c, k, t);
+    let alpha = P('opacity') * this.fade(c, t) * a.alpha;
     if (alpha <= 0.001) return;
     if (c.kind === 'text') return this.drawText(ctx, c, t, a, alpha);
     const s = this.source(c);
     if (!s) return;
-    const { src, sw, sh } = s;
+    const { sw, sh } = s;
+    let src = s.src;
     const contain = Math.min(W / sw, H / sh), cover = Math.max(W / sw, H / sh);
     const base = c.fit === 'cover' ? cover : contain;
-    const sc = c.scale * a.sc;
-    const cx = W / 2 + c.x * W + a.dx, cy = H / 2 + c.y * H + a.dy;
+    const sc = P('scale') * a.sc;
+    const cx = W / 2 + P('x') * W + a.dx, cy = H / 2 + P('y') * H + a.dy;
+    const rot = (P('rotation') || 0) + a.rot;
     // Bulanık arka plan (ana iz, dikey videolar için)
     if (tr && tr.main && state.project.bgMode === 'blur' && c.fit !== 'cover') {
       ctx.save();
@@ -359,17 +465,55 @@ const Engine = {
       ctx.drawImage(src, W / 2 - bw / 2, H / 2 - bh / 2, bw, bh);
       ctx.restore();
     }
+    if (GLFX.needed(c)) src = GLFX.process(src, sw, sh, c);
     const dw = sw * base * sc, dh = sh * base * sc;
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    if (c.blend && c.blend !== 'normal') ctx.globalCompositeOperation = c.blend;
-    ctx.filter = this.filterCss(c.filters, a.blur);
-    ctx.translate(cx, cy);
-    ctx.rotate(((c.rotation || 0) + a.rot) * Math.PI / 180);
-    if (c.flipX) ctx.scale(-1, 1);
-    ctx.drawImage(src, -dw / 2, -dh / 2, dw, dh);
-    ctx.restore();
-    if (ctx === this.ctx || !this.bounds.has(c.id)) this.bounds.set(c.id, { cx, cy, w: dw, h: dh, rot: (c.rotation || 0) + a.rot });
+    const m = c.mask;
+    const masked = m && m.type && m.type !== 'none';
+    const g = masked ? this.layer(7).ctx : ctx;
+    g.save();
+    if (!masked) {
+      g.globalAlpha = alpha;
+      if (c.blend && c.blend !== 'normal') g.globalCompositeOperation = c.blend;
+    }
+    g.filter = this.filterCss(c.filters, a.blur);
+    g.translate(cx, cy);
+    g.rotate(rot * Math.PI / 180);
+    if (c.flipX) g.scale(-1, 1);
+    g.drawImage(src, -dw / 2, -dh / 2, dw, dh);
+    if (masked) {
+      g.filter = m.feather > 0 ? `blur(${(m.feather / 100 * Math.min(dw, dh) * 0.25).toFixed(1)}px)` : 'none';
+      g.globalCompositeOperation = m.invert ? 'destination-out' : 'destination-in';
+      g.beginPath();
+      this.maskPath(g, m, dw, dh);
+      g.fillStyle = '#000';
+      g.fill();
+    }
+    g.restore();
+    if (masked) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      if (c.blend && c.blend !== 'normal') ctx.globalCompositeOperation = c.blend;
+      ctx.drawImage(this.layers[7].c, 0, 0);
+      ctx.restore();
+    }
+    if (ctx === this.ctx || !this.bounds.has(c.id)) this.bounds.set(c.id, { cx, cy, w: dw, h: dh, rot, sw, sh, src: s.src });
+  },
+
+  maskPath(g, m, dw, dh) {
+    const w = m.w * dw, hh = m.h * dh;
+    const big = (dw + dh) * 3;
+    g.save();
+    g.translate(m.x * dw, m.y * dh);
+    g.rotate((m.rot || 0) * Math.PI / 180);
+    switch (m.type) {
+      case 'rect': roundRectPath(g, -w / 2, -hh / 2, w, hh, (m.round || 0) / 100 * Math.min(w, hh) / 2); break;
+      case 'circle': g.ellipse(0, 0, Math.max(0.1, w / 2), Math.max(0.1, hh / 2), 0, 0, Math.PI * 2); break;
+      case 'heart': heartPath(g, 0, 0, w, hh); break;
+      case 'star': starPath(g, 0, 0, w, hh); break;
+      case 'linear': g.rect(-big, 0, big * 2, big); break;
+      case 'band': g.rect(-big, -hh / 2, big * 2, hh); break;
+    }
+    g.restore();
   },
 
   drawText(ctx, c, t, a, alpha) {
@@ -383,6 +527,7 @@ const Engine = {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.font = `${T.italic ? 'italic ' : ''}${T.bold ? '700' : '400'} ${size}px ${fontStack(T.font)}`;
+    if (document.fonts && !document.fonts.check(ctx.font, T.content || 'a')) document.fonts.load(ctx.font, T.content || 'a').then(() => { this.dirty = true; }).catch(() => {});
     if ('letterSpacing' in ctx) ctx.letterSpacing = `${(T.letter || 0) * k}px`;
     ctx.textBaseline = 'middle';
     const full = (T.content || ' ').split('\n');
@@ -391,10 +536,11 @@ const Engine = {
     const w = Math.max(size * 0.5, ...full.map(l => ctx.measureText(l).width));
     const hgt = lh * full.length;
     const pad = size * 0.35;
-    const cx = W / 2 + c.x * W + a.dx, cy = H / 2 + c.y * H + a.dy;
-    const sc = c.scale * a.sc;
+    const cx = W / 2 + prop(c, 'x', t) * W + a.dx, cy = H / 2 + prop(c, 'y', t) * H + a.dy;
+    const sc = prop(c, 'scale', t) * a.sc;
+    const rot = (prop(c, 'rotation', t) || 0) + a.rot;
     ctx.translate(cx, cy);
-    ctx.rotate(((c.rotation || 0) + a.rot) * Math.PI / 180);
+    ctx.rotate(rot * Math.PI / 180);
     ctx.scale(sc, sc);
     if (a.blur > 0.05) ctx.filter = `blur(${(a.blur * k).toFixed(1)}px)`;
     if (T.bgOn) {
@@ -419,7 +565,7 @@ const Engine = {
       if (T.shadow > 0 && !T.strokeW) { ctx.shadowBlur = 0; ctx.fillText(l, ax, y); }
     });
     ctx.restore();
-    if (ctx === this.ctx || !this.bounds.has(c.id)) this.bounds.set(c.id, { cx, cy, w: (w + pad * 2) * sc, h: (hgt + pad * 1.1) * sc, rot: (c.rotation || 0) + a.rot });
+    if (ctx === this.ctx || !this.bounds.has(c.id)) this.bounds.set(c.id, { cx, cy, w: (w + pad * 2) * sc, h: (hgt + pad * 1.1) * sc, rot });
   },
 
   /* ---------- geçişler ---------- */
@@ -515,6 +661,38 @@ const Engine = {
         draw(a);
         const n = 10, sh = H / n;
         clipDraw(() => { for (let i = 0; i < n; i++) ctx.rect(0, i * sh, W, sh * e); }, b);
+        break;
+      }
+      case 'clock':
+        draw(a);
+        clipDraw(() => { ctx.moveTo(W / 2, H / 2); ctx.arc(W / 2, H / 2, Math.hypot(W, H), -Math.PI / 2, -Math.PI / 2 + e * Math.PI * 2); ctx.closePath(); }, b);
+        break;
+      case 'heart': {
+        draw(a);
+        const sz = Math.max(1, e * Math.max(W, H) * 2.6);
+        clipDraw(() => heartPath(ctx, W / 2, H / 2 + sz * 0.05, sz, sz), b);
+        break;
+      }
+      case 'flip': {
+        const img = p < 0.5 ? a : b;
+        const sx = Math.max(0.001, p < 0.5 ? 1 - e * 2 : e * 2 - 1);
+        ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(sx, 1); ctx.filter = `brightness(${60 + 40 * sx}%)`; ctx.drawImage(img, -W / 2, -H / 2); ctx.restore();
+        break;
+      }
+      case 'door':
+        draw(b);
+        ctx.drawImage(a, 0, 0, W / 2, H, -e * W / 2, 0, W / 2, H);
+        ctx.drawImage(a, W / 2, 0, W / 2, H, W / 2 + e * W / 2, 0, W / 2, H);
+        break;
+      case 'crossZoom': {
+        const bl = (1 - Math.abs(p * 2 - 1)) * 28 * k;
+        if (p < 0.5) draw(a, 1, 0, 0, 1 + p * 1.2, 0, `blur(${bl}px)`);
+        else draw(b, 1, 0, 0, 1 + (1 - p) * 1.2, 0, `blur(${bl}px)`);
+        break;
+      }
+      case 'swipeBlur': {
+        const bl = (1 - Math.abs(p * 2 - 1)) * 30 * k;
+        draw(a, 1, -e * W, 0, 1, 0, `blur(${bl}px)`); draw(b, 1, (1 - e) * W, 0, 1, 0, `blur(${bl}px)`);
         break;
       }
       default: draw(b);
@@ -769,6 +947,82 @@ const Engine = {
         ctx.fillStyle = '#333'; ctx.font = `italic ${Math.round(mb * 0.35)}px "Brush Script MT", "Segoe Script", cursive`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(state.project.name || '', W / 2, H - mb / 2);
+        ctx.restore();
+        break;
+      }
+      case 'duotone': {
+        const img = snap();
+        redraw(img, 'grayscale(100%) contrast(120%)');
+        ctx.save(); ctx.globalAlpha = clamp(I, 0, 1);
+        ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = '#ff8a5c'; ctx.fillRect(0, 0, W, H);
+        ctx.globalCompositeOperation = 'screen'; ctx.fillStyle = '#3a0f6b'; ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+        break;
+      }
+      case 'heartbeat': {
+        const img = snap();
+        const ph = lt % 1;
+        const pulse = Math.max(0, 1 - ph / 0.12) + 0.6 * Math.max(0, 1 - Math.abs(ph - 0.26) / 0.1);
+        const s = 1 + 0.08 * I * pulse;
+        ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(s, s); ctx.drawImage(img, -W / 2, -H / 2); ctx.restore();
+        const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.hypot(W, H) / 2);
+        g.addColorStop(0, 'rgba(255,0,40,0)'); g.addColorStop(1, `rgba(255,0,40,${0.45 * clamp(I, 0, 1) * pulse})`);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        break;
+      }
+      case 'tvoff': {
+        const p = clamp((lt - (d - 0.7)) / 0.7, 0, 1);
+        if (p <= 0) break;
+        const img = snap();
+        ctx.save(); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+        const sy = p < 0.6 ? Math.max(0.006, 1 - p / 0.6) : 0.006;
+        const sx = p < 0.6 ? 1 : Math.max(0, 1 - (p - 0.6) / 0.4);
+        ctx.translate(W / 2, H / 2); ctx.scale(sx, sy); ctx.filter = `brightness(${100 + p * 250}%)`;
+        ctx.drawImage(img, -W / 2, -H / 2); ctx.restore();
+        break;
+      }
+      case 'dust': {
+        ctx.save();
+        const n = Math.round(40 * I);
+        for (let i = 0; i < n; i++) {
+          const x = hash(fr, i) * W, y = hash(fr, i + 500) * H, r = (0.6 + hash(fr, i + 900) * 2.5) * k;
+          ctx.globalAlpha = 0.3 + hash(fr, i + 1300) * 0.5;
+          ctx.fillStyle = hash(fr, i + 1700) > 0.5 ? '#fff' : '#111';
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        }
+        if (hash(fr, 77) < 0.3 * I) {
+          ctx.strokeStyle = 'rgba(20,20,20,.6)'; ctx.lineWidth = 1.2 * k; ctx.beginPath();
+          const x = hash(fr, 88) * W, y = hash(fr, 99) * H;
+          ctx.moveTo(x, y); ctx.quadraticCurveTo(x + 20 * k, y + 10 * k, x + 15 * k, y + 40 * k); ctx.stroke();
+        }
+        ctx.restore();
+        grain(0.15 * I);
+        break;
+      }
+      case 'bokeh': {
+        ctx.save(); ctx.globalCompositeOperation = 'screen';
+        const cols = ['255,190,90', '255,120,160', '140,200,255', '255,240,170'];
+        particles(Math.round(22 * clamp(I, 0.2, 1.5)), (i, a, b, s2, r) => {
+          const x = (a + 0.04 * Math.sin(lt * 0.4 + i)) * W, y = (b + 0.04 * Math.cos(lt * 0.3 + i * 2)) * H;
+          const rad = (40 + r * 90) * k;
+          const gr = ctx.createRadialGradient(x, y, 0, x, y, rad);
+          const al = 0.25 + 0.2 * Math.sin(lt * (0.8 + s2) + i);
+          gr.addColorStop(0, `rgba(${cols[i % 4]},${al})`); gr.addColorStop(0.7, `rgba(${cols[i % 4]},${al * 0.7})`); gr.addColorStop(1, `rgba(${cols[i % 4]},0)`);
+          ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.restore();
+        break;
+      }
+      case 'fireflies': {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        particles(Math.round(45 * clamp(I, 0.2, 1.5)), (i, a, b, s2, r) => {
+          const x = (a + 0.06 * Math.sin(lt * (0.5 + s2) + i * 3)) * W, y = (b + 0.05 * Math.cos(lt * (0.4 + r) + i)) * H;
+          const al = Math.max(0, Math.sin(lt * (1.5 + s2 * 2) + i * 7));
+          const rad = (10 + r * 14) * k;
+          const gr = ctx.createRadialGradient(x, y, 0, x, y, rad);
+          gr.addColorStop(0, `rgba(255,250,170,${al})`); gr.addColorStop(0.25, `rgba(220,255,90,${al * 0.6})`); gr.addColorStop(1, 'rgba(180,255,60,0)');
+          ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+        });
         ctx.restore();
         break;
       }

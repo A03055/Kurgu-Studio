@@ -113,6 +113,9 @@ const ICONS = {
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/>',
+  diamond: '<path d="M12 3 21 12 12 21 3 12z"/>',
+  wand: '<path d="m15 4 5 5L9 20l-5-5zM14 5l5 5M5 3v4M3 5h4M19 15v4M17 17h4"/>',
   palette: '<circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2a10 10 0 0 0 0 20c1 0 1.5-.8 1.5-1.5 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.8.7-1.5 1.5-1.5H16a6 6 0 0 0 6-6c0-4.4-4.5-8-10-8z"/>',
 };
 function icon(name, size = 18) {
@@ -150,3 +153,20 @@ const DB = {
   getAll(store) { return this._req(store, 'readonly', s => s.getAll()); },
   del(store, key) { return this._req(store, 'readwrite', s => s.delete(key)); },
 };
+
+/* Şekil yolları (maske ve geçişler için); (cx,cy) merkez, w/h boyut */
+function heartPath(ctx, cx, cy, w, hh) {
+  const X = u => cx + u * w, Y = v => cy + v * hh;
+  ctx.moveTo(X(0), Y(0.42));
+  ctx.bezierCurveTo(X(-0.62), Y(0.02), X(-0.48), Y(-0.58), X(0), Y(-0.26));
+  ctx.bezierCurveTo(X(0.48), Y(-0.58), X(0.62), Y(0.02), X(0), Y(0.42));
+  ctx.closePath();
+}
+function starPath(ctx, cx, cy, w, hh) {
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? 0.2 : 0.5, a = -Math.PI / 2 + i * Math.PI / 5;
+    const x = cx + Math.cos(a) * r * w, y = cy + Math.sin(a) * r * hh;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.closePath();
+}

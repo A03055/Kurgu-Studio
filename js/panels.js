@@ -38,11 +38,13 @@ const Panels = {
   render_media(b) {
     const input = h('input', { type: 'file', multiple: true, accept: 'video/*,image/*,audio/*', hidden: true });
     input.addEventListener('change', () => { importFiles(input.files); input.value = ''; });
+    input.setAttribute('accept', 'video/*,image/*,audio/*,.kurgu');
     b.appendChild(h('div', { class: 'panel-title' }, 'Medya'));
     b.appendChild(h('button', { class: 'import-zone', onclick: () => input.click() },
       h('span', { class: 'iz-ic', html: icon('upload', 26) }),
       h('b', {}, 'İçe aktar'),
       h('span', {}, 'Video, fotoğraf veya ses dosyası seç ya da buraya sürükle'), input));
+    b.appendChild(h('button', { class: 'btn ghost slideshow-btn', html: icon('wand', 16) + ' Otomatik slayt videosu yap', title: 'Kütüphanedeki tüm fotoğraf ve videolardan geçişli, müzikli video hazırlar', onclick: autoSlideshow }));
     const items = [...state.media.values()].filter(m => !m.builtin || m.kind !== 'audio');
     if (!items.length) b.appendChild(h('p', { class: 'hint center' }, 'Henüz medya yok.'));
     const grid = h('div', { class: 'media-grid' });
@@ -84,6 +86,9 @@ const Panels = {
   },
 
   render_audio(b) {
+    b.appendChild(h('button', { class: 'rec-big', onclick: () => VoiceRec.toggle() },
+      h('span', { class: 'ri', html: icon('mic', 20) }),
+      h('span', {}, h('b', {}, 'Seslendirme kaydet'), h('span', {}, 'Mikrofondan oynatma çizgisinin olduğu yere kaydeder. Video oynar, sen konuşursun.'))));
     b.appendChild(h('div', { class: 'panel-title' }, 'Müzik ', h('small', {}, 'ücretsiz · telifsiz')));
     for (const s of MUSIC) b.appendChild(this.soundRow(s, 'music'));
     b.appendChild(h('div', { class: 'panel-title' }, 'Ses efektleri'));
@@ -251,6 +256,7 @@ const Library = {
       clip.start = at;
     }
     state.selected = clip.id;
+    state.multi.clear();
     if (clip.kind !== 'audio' && opt.time === undefined && track.main) Engine.seek(clip.start);
     refresh();
     $('#emptyHint').classList.add('hidden');

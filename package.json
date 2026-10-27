@@ -1,7 +1,7 @@
 {
   "name": "kurgu-studio",
   "productName": "Kurgu Studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Ücretsiz, reklamsız, filigransız video düzenleyici",
   "main": "electron/main.js",
   "author": "Kurgu Studio",
@@ -10,7 +10,9 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win --x64",
-    "dist:dir": "electron-builder --win --x64 --dir"
+    "dist:dir": "electron-builder --win --x64 --dir",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
   },
   "devDependencies": {
     "electron": "^38.2.0",
@@ -27,6 +29,7 @@
     "files": [
       "index.html",
       "css/**/*",
+      "fonts/**/*",
       "js/**/*",
       "electron/**/*",
       "build/icon.png",
@@ -35,8 +38,18 @@
     "win": {
       "icon": "build/icon.png",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
@@ -47,11 +60,44 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Kurgu Studio",
       "artifactName": "KurguStudio-Kurulum-${version}.${ext}",
-      "installerLanguages": ["tr_TR"],
+      "installerLanguages": [
+        "tr_TR"
+      ],
       "language": "1055"
     },
     "portable": {
       "artifactName": "KurguStudio-Tasinabilir-${version}.${ext}"
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.video",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "identity": null
+    },
+    "dmg": {
+      "artifactName": "KurguStudio-Mac-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "AudioVideo",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "KurguStudio-Linux-${version}.${ext}"
     }
-  }
+  },
+  "homepage": "https://github.com/A03055/CAPCUT-CAKMASI"
 }
